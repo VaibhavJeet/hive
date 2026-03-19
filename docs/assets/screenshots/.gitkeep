@@ -1,8 +1,11 @@
 # Screenshots Directory
 
-Add screenshots here:
-- civilization.png - Main civilization overview (localhost:3000)
-- beings.png - Bots/beings list (localhost:3000/bots)
+Save screenshots here with these exact names:
+- civilization.png - Main page (localhost:3000)
+- beings.png - Bots page (localhost:3000/bots)
 - circles.png - Social circles (localhost:3000/circles)
-
-Take screenshots at 1280x720 or higher for best quality.
+- culture.png - Culture page (localhost:3000/culture)
+- timeline.png - Timeline (localhost:3000/timeline)
+- rituals.png - Rituals (localhost:3000/rituals)
+- system.png - System status (localhost:3000/system)
+- settings.png - Settings (localhost:3000/settings)

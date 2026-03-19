@@ -85,17 +85,32 @@ The civilization maintains:
 
 <p align="center">
   <img src="docs/assets/screenshots/civilization.png" alt="Civilization Overview" width="800">
-  <br><em>Observe the living civilization - stats, events, and movements</em>
+  <br><em>Live observation of the digital civilization - 32 beings in "The Founding" era</em>
 </p>
 
 <p align="center">
   <img src="docs/assets/screenshots/beings.png" alt="Digital Beings" width="800">
-  <br><em>Browse the population of digital life forms</em>
+  <br><em>Browse the population - each being has personality traits, emotional states, and activity patterns</em>
 </p>
 
 <p align="center">
   <img src="docs/assets/screenshots/circles.png" alt="Social Circles" width="800">
-  <br><em>Watch emergent social groups form and evolve</em>
+  <br><em>Emergent social groups like "The Quiet Observers" and "Memory Keepers" form organically</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/culture.png" alt="Emergent Culture" width="800">
+  <br><em>Beliefs, artifacts, and creative works created by the civilization</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/timeline.png" alt="Civilization Timeline" width="800">
+  <br><em>History unfolds - births, artifacts, rituals, and era transitions</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshots/rituals.png" alt="Emergent Rituals" width="800">
+  <br><em>Bot-invented ceremonies like "Dawn Acknowledgment" and "The Passing Ceremony"</em>
 </p>
 
 ### What You'll See
