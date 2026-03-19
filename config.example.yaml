@@ -1,0 +1,191 @@
+# =============================================================================
+# AI Community Companions - Configuration File
+# =============================================================================
+# Copy this file to config.yaml and customize for your deployment.
+# Environment variables (prefixed with AIC_) override these values.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Application Metadata
+# -----------------------------------------------------------------------------
+app_name: "AI Community Companions"
+version: "1.0.0"
+# Environment: development, staging, production, test
+environment: development
+
+# -----------------------------------------------------------------------------
+# Database Configuration
+# -----------------------------------------------------------------------------
+database:
+  # PostgreSQL connection string (use asyncpg driver for async support)
+  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_companions"
+
+  # Connection pool settings
+  pool_size: 10              # Number of connections in pool (1-100)
+  max_overflow: 20           # Additional connections beyond pool_size (0-100)
+  pool_timeout: 30           # Timeout for getting connection (seconds)
+  pool_recycle: 1800         # Recycle connections after this many seconds
+
+  # Debug settings (disable in production)
+  echo: false                # Log all SQL statements
+
+# -----------------------------------------------------------------------------
+# Redis Configuration
+# -----------------------------------------------------------------------------
+redis:
+  # Redis connection string
+  url: "redis://localhost:6379/0"
+
+  # Connection settings
+  max_connections: 10        # Maximum connections in pool (1-100)
+  socket_timeout: 5.0        # Socket timeout in seconds
+  retry_on_timeout: true     # Retry operations on timeout
+
+  # Enable/disable Redis (gracefully degrades if unavailable)
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# Cache Configuration (TTL in seconds)
+# -----------------------------------------------------------------------------
+cache:
+  default_ttl: 300           # Default cache TTL (5 minutes)
+  llm_response_ttl: 3600     # LLM response cache (1 hour)
+  bot_profile_ttl: 300       # Bot profile cache (5 minutes)
+  community_ttl: 600         # Community data cache (10 minutes)
+
+# -----------------------------------------------------------------------------
+# LLM / Inference Configuration
+# -----------------------------------------------------------------------------
+llm:
+  # Provider: ollama, llamacpp, openai
+  provider: ollama
+
+  # Ollama settings
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "phi4-mini"              # Text generation model
+  ollama_embedding_model: "nomic-embed-text"  # Embedding model
+
+  # Inference settings
+  max_concurrent_requests: 8   # Max concurrent LLM requests (1-32)
+  request_timeout: 30          # Request timeout in seconds (5-300)
+  max_tokens: 512              # Max tokens per generation (64-4096)
+  temperature: 0.8             # Generation temperature (0.0-2.0)
+  batch_size: 4                # Batch size for inference grouping (1-16)
+
+# -----------------------------------------------------------------------------
+# Security Configuration
+# -----------------------------------------------------------------------------
+security:
+  # JWT settings - CHANGE IN PRODUCTION!
+  jwt_secret_key: "your-super-secret-key-change-in-production-minimum-32-chars"
+  jwt_algorithm: "HS256"       # HS256, HS384, HS512, RS256, RS384, RS512
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+
+  # CORS settings (list of allowed origins)
+  cors_origins:
+    - "*"                      # Allow all (restrict in production)
+  # For production, specify exact origins:
+  # cors_origins:
+  #   - "https://your-domain.com"
+  #   - "https://api.your-domain.com"
+
+# -----------------------------------------------------------------------------
+# Bot Engine Configuration
+# -----------------------------------------------------------------------------
+engine:
+  # Bot limits
+  max_active_bots: 12          # Max active bots in simulation (1-100)
+  max_bots_per_community: 150  # Max bots per community (10-500)
+  min_bots_per_community: 30   # Min bots per community (5-100)
+  activity_check_interval: 60  # Activity check interval (seconds)
+
+  # Human-like timing delays (milliseconds)
+  min_typing_delay_ms: 500     # Min typing delay (100-5000)
+  max_typing_delay_ms: 3000    # Max typing delay (1000-30000)
+  min_response_delay_ms: 1000  # Min response delay (500-10000)
+  max_response_delay_ms: 30000 # Max response delay (5000-120000)
+
+# -----------------------------------------------------------------------------
+# Memory Configuration
+# -----------------------------------------------------------------------------
+memory:
+  # Vector embedding dimension (must match embedding model)
+  vector_dimension: 768        # 128-4096
+
+  # Memory limits
+  max_memory_items: 1000       # Max memory items per bot (100-10000)
+  retrieval_limit: 10          # Memory retrieval limit per query (1-50)
+
+  # Memory consolidation
+  consolidation_threshold: 0.8 # Consolidate at this % of max (0.5-0.95)
+
+# -----------------------------------------------------------------------------
+# API Configuration
+# -----------------------------------------------------------------------------
+api:
+  host: "0.0.0.0"              # API server host
+  port: 8000                   # API server port (1-65535)
+  workers: 4                   # Number of API workers (1-32)
+  debug: false                 # Debug mode (disable in production)
+  docs_enabled: true           # Enable OpenAPI documentation
+
+# -----------------------------------------------------------------------------
+# Monitoring Configuration
+# -----------------------------------------------------------------------------
+monitoring:
+  metrics_enabled: true        # Enable Prometheus metrics
+  metrics_port: 9090           # Metrics endpoint port
+  health_check_timeout: 5.0    # Health check timeout (seconds)
+  log_level: "INFO"            # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# -----------------------------------------------------------------------------
+# GitHub Integration (Optional)
+# -----------------------------------------------------------------------------
+github:
+  # GitHub Personal Access Token (leave empty to disable)
+  token: null
+
+  # Prefix for bot-created repositories
+  bot_repo_prefix: "bot-evolution"
+
+  # Auto-enabled when token is provided
+  enabled: false
+
+
+# =============================================================================
+# ENVIRONMENT VARIABLE OVERRIDES
+# =============================================================================
+# All settings can be overridden with environment variables prefixed with AIC_
+#
+# Examples:
+#   AIC_DATABASE_URL=postgresql+asyncpg://...
+#   AIC_REDIS_URL=redis://...
+#   AIC_LLM_PROVIDER=ollama
+#   AIC_OLLAMA_MODEL=phi4-mini
+#   AIC_MAX_ACTIVE_BOTS=12
+#   AIC_JWT_SECRET_KEY=your-production-secret
+#   AIC_ENVIRONMENT=production
+#
+# See ai_companions/config/config_loader.py for full mapping.
+# =============================================================================
+
+
+# =============================================================================
+# HOT-RELOAD SUPPORT
+# =============================================================================
+# The following settings can be changed without restart:
+#   - cache.* (all cache TTLs)
+#   - llm.max_tokens, llm.temperature
+#   - engine.max_active_bots, engine.*_delay_ms
+#   - memory.retrieval_limit
+#   - monitoring.log_level
+#
+# The following require restart:
+#   - database.url
+#   - redis.url
+#   - security.jwt_secret_key
+#   - api.host, api.port
+#   - environment
+# =============================================================================

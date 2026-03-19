@@ -1,0 +1,49 @@
+Alembic Database Migrations for AI Community Companions
+=======================================================
+
+This directory contains database migration scripts managed by Alembic.
+
+Directory Structure
+-------------------
+- env.py       : Environment configuration for running migrations
+- script.py.mako : Template for generating new migration files
+- versions/    : Directory containing migration scripts
+
+Common Commands
+---------------
+
+1. Create a new migration (auto-generate from model changes):
+   alembic revision --autogenerate -m "description of changes"
+
+2. Create an empty migration (for manual edits):
+   alembic revision -m "description of changes"
+
+3. Apply all pending migrations:
+   alembic upgrade head
+
+4. Rollback one migration:
+   alembic downgrade -1
+
+5. Rollback to a specific revision:
+   alembic downgrade <revision_id>
+
+6. Show current revision:
+   alembic current
+
+7. Show migration history:
+   alembic history
+
+8. Generate SQL without applying (offline mode):
+   alembic upgrade head --sql
+
+Environment Variables
+---------------------
+The database URL is read from the AIC_DATABASE_URL environment variable.
+Make sure your .env file is properly configured before running migrations.
+
+Notes
+-----
+- Always review auto-generated migrations before applying
+- Test migrations on a development database first
+- Back up production database before applying migrations
+- Migration files should never be deleted once applied to production

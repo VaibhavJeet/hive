@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#16213e"/>
+    </linearGradient>
+    <linearGradient id="brainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="50%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#a855f7"/>
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22d3ee"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="200" cy="200" r="180" fill="url(#bgGrad)"/>
+  <circle cx="200" cy="200" r="180" stroke="#2a2a4a" stroke-width="2" fill="none"/>
+
+  <!-- Neural network connections -->
+  <g stroke="url(#brainGrad)" stroke-width="2" opacity="0.6" filter="url(#glow)">
+    <line x1="120" y1="140" x2="200" y2="120"/>
+    <line x1="200" y1="120" x2="280" y2="140"/>
+    <line x1="120" y1="140" x2="100" y2="200"/>
+    <line x1="280" y1="140" x2="300" y2="200"/>
+    <line x1="100" y1="200" x2="120" y2="260"/>
+    <line x1="300" y1="200" x2="280" y2="260"/>
+    <line x1="120" y1="260" x2="200" y2="280"/>
+    <line x1="280" y1="260" x2="200" y2="280"/>
+    <line x1="200" y1="120" x2="200" y2="200"/>
+    <line x1="100" y1="200" x2="200" y2="200"/>
+    <line x1="300" y1="200" x2="200" y2="200"/>
+    <line x1="200" y1="200" x2="200" y2="280"/>
+    <line x1="120" y1="140" x2="200" y2="200"/>
+    <line x1="280" y1="140" x2="200" y2="200"/>
+    <line x1="120" y1="260" x2="200" y2="200"/>
+    <line x1="280" y1="260" x2="200" y2="200"/>
+  </g>
+
+  <!-- Neural nodes -->
+  <g filter="url(#glow)">
+    <!-- Top row -->
+    <circle cx="200" cy="120" r="14" fill="url(#nodeGrad)"/>
+
+    <!-- Second row -->
+    <circle cx="120" cy="140" r="12" fill="url(#brainGrad)"/>
+    <circle cx="280" cy="140" r="12" fill="url(#brainGrad)"/>
+
+    <!-- Middle row -->
+    <circle cx="100" cy="200" r="10" fill="url(#brainGrad)"/>
+    <circle cx="200" cy="200" r="20" fill="url(#nodeGrad)"/>
+    <circle cx="300" cy="200" r="10" fill="url(#brainGrad)"/>
+
+    <!-- Fourth row -->
+    <circle cx="120" cy="260" r="12" fill="url(#brainGrad)"/>
+    <circle cx="280" cy="260" r="12" fill="url(#brainGrad)"/>
+
+    <!-- Bottom row -->
+    <circle cx="200" cy="280" r="14" fill="url(#nodeGrad)"/>
+  </g>
+
+  <!-- Center pulse rings -->
+  <circle cx="200" cy="200" r="35" stroke="url(#nodeGrad)" stroke-width="1" fill="none" opacity="0.4"/>
+  <circle cx="200" cy="200" r="50" stroke="url(#nodeGrad)" stroke-width="1" fill="none" opacity="0.2"/>
+
+  <!-- Outer ring accent -->
+  <circle cx="200" cy="200" r="175" stroke="url(#brainGrad)" stroke-width="1" fill="none" opacity="0.3"/>
+</svg>

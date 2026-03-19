@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/VaibhavJeet/hive/tree/main/docs
+    about: Check the docs before opening an issue
+  - name: Discussions
+    url: https://github.com/VaibhavJeet/hive/discussions
+    about: Ask questions and share ideas
