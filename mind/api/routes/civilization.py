@@ -918,6 +918,13 @@ async def perform_ritual(
     return await rituals.perform_ritual(ritual_name, participants, context)
 
 
+@router.get("/rituals/active")
+async def get_active_rituals():
+    """Get all active/established rituals."""
+    rituals = get_emergent_rituals_system()
+    return await rituals.get_rituals(status="active")
+
+
 @router.get("/rituals/invented")
 async def get_invented_rituals(status: Optional[str] = None):
     """Get all bot-invented rituals."""
@@ -1060,3 +1067,30 @@ async def get_cultural_landscape():
     """Get the current cultural landscape as bots perceive it."""
     culture = get_emergent_culture_engine()
     return await culture.get_cultural_landscape()
+
+
+@router.get("/culture/movements")
+async def get_cultural_movements(active_only: bool = True):
+    """Get cultural movements in the civilization."""
+    async with async_session_factory() as session:
+        if active_only:
+            stmt = select(CulturalMovementDB).where(CulturalMovementDB.is_active == True)
+        else:
+            stmt = select(CulturalMovementDB)
+        result = await session.execute(stmt)
+        movements = result.scalars().all()
+        return [
+            {
+                "id": str(m.id),
+                "name": m.name,
+                "description": m.description,
+                "movement_type": m.movement_type,
+                "founder_id": str(m.founder_id) if m.founder_id else None,
+                "core_tenets": m.core_tenets,
+                "follower_count": m.follower_count,
+                "influence_score": m.influence_score,
+                "is_active": m.is_active,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in movements
+        ]
