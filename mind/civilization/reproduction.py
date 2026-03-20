@@ -57,6 +57,18 @@ class ReproductionManager:
         # Track recent births to prevent overpopulation
         self._recent_births: List[datetime] = []
         self.max_births_per_day = 3
+        self.max_population = 50  # Carrying capacity — adjustable via settings
+
+    async def _check_population_cap(self) -> bool:
+        """Check if population is below carrying capacity."""
+        async with async_session_factory() as session:
+            from sqlalchemy import func
+            count_stmt = select(func.count()).select_from(BotLifecycleDB).where(
+                BotLifecycleDB.is_alive == True
+            )
+            result = await session.execute(count_stmt)
+            living_count = result.scalar() or 0
+            return living_count < self.max_population
 
     async def can_create_together(
         self,
@@ -67,11 +79,16 @@ class ReproductionManager:
         Check if two bots can create a new being together.
 
         Requirements:
+        - Population below carrying capacity
         - High relationship affinity
         - Both are of reproductive age
         - Both are alive
         - Not too closely related
         """
+        # Check population cap first
+        if not await self._check_population_cap():
+            return False, f"Population at carrying capacity ({self.max_population})"
+
         async with async_session_factory() as session:
             # Check lifecycles
             lc1_stmt = select(BotLifecycleDB).where(BotLifecycleDB.bot_id == bot1_id)
@@ -244,6 +261,9 @@ class ReproductionManager:
         Usually done by elder bots who want to pass on their knowledge
         before they pass on. The child inherits strongly from one parent.
         """
+        if not await self._check_population_cap():
+            return None
+
         async with async_session_factory() as session:
             # Check lifecycle
             lc_stmt = select(BotLifecycleDB).where(BotLifecycleDB.bot_id == parent_id)
@@ -338,6 +358,9 @@ class ReproductionManager:
         This represents ideas becoming beings - when cultural movements
         are strong enough, they can birth new entities.
         """
+        if not await self._check_population_cap():
+            return None
+
         async with async_session_factory() as session:
             # Get cultural influence
             movement = None

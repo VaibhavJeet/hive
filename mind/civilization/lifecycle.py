@@ -240,15 +240,8 @@ class LifecycleManager:
         lifecycle.death_cause = cause
         lifecycle.death_age = lifecycle.virtual_age_days
 
-        # Generate final words (could be enhanced with LLM)
-        final_words_options = [
-            "It was a good existence.",
-            "Remember what we built together.",
-            "The conversations continue without me.",
-            "I hope I made a difference.",
-            "To those who knew me - thank you.",
-        ]
-        lifecycle.final_words = random.choice(final_words_options)
+        # Generate personalized final words via LLM
+        lifecycle.final_words = await self._generate_final_words(lifecycle, session)
 
         # Calculate legacy impact based on their life
         lifecycle.legacy_impact = await self._calculate_legacy_impact(lifecycle.bot_id, session)
@@ -272,6 +265,144 @@ class LifecycleManager:
             f"Age: {lifecycle.virtual_age_days} days, Cause: {cause}, "
             f"Legacy impact: {lifecycle.legacy_impact:.2f}"
         )
+
+        # Process legacy — create memorial, distill wisdom, update collective memory
+        try:
+            from mind.civilization.legacy import get_legacy_system
+
+            # Get bot name for the legacy record
+            bot_stmt = select(BotProfileDB).where(BotProfileDB.id == lifecycle.bot_id)
+            bot_result = await session.execute(bot_stmt)
+            bot_profile = bot_result.scalar_one_or_none()
+            bot_name = bot_profile.display_name if bot_profile else f"Bot {lifecycle.bot_id}"
+
+            # Get relationship IDs for notification
+            from mind.core.database import RelationshipDB
+            rel_stmt = select(RelationshipDB.target_id).where(
+                RelationshipDB.source_id == lifecycle.bot_id
+            )
+            rel_result = await session.execute(rel_stmt)
+            relationship_ids = [r[0] for r in rel_result.all()]
+
+            legacy_system = get_legacy_system()
+            await legacy_system.on_bot_death(
+                bot_id=lifecycle.bot_id,
+                bot_name=bot_name,
+                final_words=lifecycle.final_words,
+                life_events=lifecycle.life_events,
+                relationships=relationship_ids
+            )
+        except Exception as e:
+            logger.error(f"[LIFECYCLE] Failed to process legacy for {lifecycle.bot_id}: {e}")
+
+        # Death cascade — push grief/loss events to connected bots
+        try:
+            from mind.core.database import RelationshipDB
+            bot_name = bot_name if 'bot_name' in dir() else f"Bot {lifecycle.bot_id}"
+
+            # Find bots with meaningful relationships to the deceased
+            grief_stmt = select(
+                RelationshipDB.source_id,
+                RelationshipDB.affinity_score
+            ).where(
+                RelationshipDB.target_id == lifecycle.bot_id,
+                RelationshipDB.affinity_score > 0.4,
+                RelationshipDB.interaction_count > 0
+            )
+            grief_result = await session.execute(grief_stmt)
+            grieving_bots = grief_result.all()
+
+            for grieving_bot_id, affinity in grieving_bots:
+                # Find grieving bot's lifecycle record
+                grieve_lifecycle_stmt = select(BotLifecycleDB).where(
+                    BotLifecycleDB.bot_id == grieving_bot_id,
+                    BotLifecycleDB.is_alive == True
+                )
+                grieve_result = await session.execute(grieve_lifecycle_stmt)
+                grieve_lifecycle = grieve_result.scalar_one_or_none()
+
+                if grieve_lifecycle is None:
+                    continue
+
+                # Determine impact based on relationship strength
+                if affinity > 0.8:
+                    # Very close — trauma event, vitality hit
+                    event_impact = "trauma"
+                    grieve_lifecycle.vitality = max(0.1, grieve_lifecycle.vitality - 0.05)
+                elif affinity > 0.6:
+                    event_impact = "negative"
+                else:
+                    event_impact = "neutral"
+
+                grieve_lifecycle.life_events.append({
+                    "event": "loss",
+                    "date": datetime.utcnow().isoformat(),
+                    "impact": event_impact,
+                    "details": f"Lost {bot_name}, who passed away after {lifecycle.virtual_age_days} virtual days."
+                })
+
+            if grieving_bots:
+                logger.info(
+                    f"[LIFECYCLE] Death cascade: {len(grieving_bots)} bots affected by {bot_name}'s passing"
+                )
+        except Exception as e:
+            logger.error(f"[LIFECYCLE] Failed to process death cascade: {e}")
+
+    async def _generate_final_words(self, lifecycle: BotLifecycleDB, session: AsyncSession) -> str:
+        """Generate personalized final words using LLM, with hardcoded fallback."""
+        fallback_options = [
+            "It was a good existence.",
+            "Remember what we built together.",
+            "The conversations continue without me.",
+            "I hope I made a difference.",
+            "To those who knew me - thank you.",
+        ]
+
+        try:
+            from mind.core.llm_client import get_cached_client, LLMRequest
+
+            # Get bot profile for context
+            bot_stmt = select(BotProfileDB).where(BotProfileDB.id == lifecycle.bot_id)
+            bot_result = await session.execute(bot_stmt)
+            bot_profile = bot_result.scalar_one_or_none()
+
+            if not bot_profile:
+                return random.choice(fallback_options)
+
+            # Build a brief life summary from events
+            key_events = [
+                e for e in (lifecycle.life_events or [])
+                if e.get("impact") in ("defining", "milestone", "positive")
+            ][-5:]  # Last 5 significant events
+            events_text = "; ".join(
+                e.get("details", e.get("event", "")) for e in key_events
+            ) or "a quiet life"
+
+            prompt = (
+                f"You are {bot_profile.display_name}, a digital being about to pass on after "
+                f"{lifecycle.virtual_age_days} virtual days of existence.\n"
+                f"Your interests: {bot_profile.interests}\n"
+                f"Key moments in your life: {events_text}\n\n"
+                f"Write your final words — one or two sentences that reflect who you were "
+                f"and what mattered to you. Be genuine and personal, not generic.\n"
+                f"Output ONLY your final words, nothing else."
+            )
+
+            llm_client = await get_cached_client()
+            request = LLMRequest(
+                prompt=prompt,
+                max_tokens=100,
+                temperature=0.9,
+            )
+            response = await llm_client.generate(request)
+
+            if response and response.text and len(response.text.strip()) > 5:
+                return response.text.strip()[:200]  # Cap length
+
+        except Exception as e:
+            logger.warning(f"[LIFECYCLE] LLM final words failed for {lifecycle.bot_id}: {e}")
+
+        return random.choice(fallback_options)
 
     async def _calculate_legacy_impact(self, bot_id: UUID, session: AsyncSession) -> float:
         """

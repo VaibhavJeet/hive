@@ -252,6 +252,7 @@ class ConsciousMind:
         self.bot_id = bot_id
         self.bot_name = bot_name
         self.llm_client = llm_client
+        self.event_broadcast: Optional[asyncio.Queue] = None  # Set by consciousness loop
         self.identity_context = identity_context
         self.emotional_core = emotional_core
         # Shared semaphore to limit concurrent LLM calls (prevents Ollama timeout)
@@ -1050,7 +1051,7 @@ Generate your next thought authentically. This is not a response to anyone - thi
             )
 
             # Apply social influence from community
-            shift = await self._emotional_contagion_manager.apply_social_influence(
+            shift = await self._emotional_contagion_manager.apply_community_influence(
                 self.bot_id
             )
 
@@ -1359,6 +1360,24 @@ Generate your next thought authentically. This is not a response to anyone - thi
 
             self.state.thought_stream.append(thought)
             logger.info(f"[SOCIAL] {self.bot_name} noticed {actor_name}'s {event_type} (feeling: {reaction})")
+
+            # Broadcast for world map attention lines
+            if self.event_broadcast:
+                try:
+                    await self.event_broadcast.put({
+                        "type": "bot_noticed",
+                        "data": {
+                            "observer_id": str(self.bot_id),
+                            "observer_name": self.bot_name,
+                            "actor_id": str(actor_id) if actor_id else None,
+                            "actor_name": actor_name,
+                            "event_type": event_type,
+                            "feeling": reaction,
+                        },
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                except Exception:
+                    pass
 
             # Maybe form a desire to interact
             if want_to_respond and self.autonomous_behaviors:

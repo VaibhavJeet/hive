@@ -78,6 +78,14 @@ class SocialLoop(BaseLoop):
         # Register all active bots with emotional contagion manager
         await self._register_bots_for_contagion()
 
+        # Refresh social graph on loop start
+        from mind.engine.social_graph import get_social_graph
+        social_graph = get_social_graph()
+        if not social_graph._initialized:
+            await social_graph.refresh()
+
+        _social_graph_refresh_counter = 0
+
         while self.is_running:
             try:
                 # Run social dynamics every 2-3 minutes
@@ -85,6 +93,12 @@ class SocialLoop(BaseLoop):
 
                 if not self.active_bots or len(self.active_bots) < 2:
                     continue
+
+                # Periodically refresh social graph (~every 10 cycles)
+                _social_graph_refresh_counter += 1
+                if _social_graph_refresh_counter >= 10:
+                    _social_graph_refresh_counter = 0
+                    await social_graph.refresh()
 
                 # Simulate time passing for all relationships
                 self.social_dynamics_manager.simulate_time_passing(hours=0.05)  # ~3 minutes
@@ -119,13 +133,31 @@ class SocialLoop(BaseLoop):
                 await asyncio.sleep(60)
 
     async def _generate_social_conflict(self):
-        """Generate a random conflict between two bots."""
+        """Generate a conflict between two socially proximate bots."""
+        from mind.engine.social_graph import get_social_graph
+
         bots = list(self.active_bots.values())
         if len(bots) < 2:
             return
 
-        # Pick two random bots
-        bot_a, bot_b = random.sample(bots, 2)
+        social_graph = get_social_graph()
+
+        # Pick first bot randomly, then find a socially connected partner
+        bot_a = random.choice(bots)
+
+        if social_graph._initialized:
+            # Only pick bots within Tier 1-2 (same community or FoF)
+            same_community = social_graph.get_same_community_bots(bot_a.id)
+            fof_ids = {f[0] for f in social_graph.get_friends_of_friends(bot_a.id)}
+            proximate_ids = same_community | fof_ids
+            active_ids = set(self.active_bots.keys()) - {bot_a.id}
+            proximate_active = proximate_ids & active_ids
+            if not proximate_active:
+                return
+            bot_b = self.active_bots[random.choice(list(proximate_active))]
+        else:
+            remaining = [b for b in bots if b.id != bot_a.id]
+            bot_b = random.choice(remaining)
 
         # Get their relationship
         relationship = self.social_dynamics_manager.get_or_create_relationship(bot_a.id, bot_b.id)
@@ -417,10 +449,26 @@ class SocialLoop(BaseLoop):
         if not nearby_bots:
             return []
 
-        return await self.emotional_contagion_manager.spread_emotion(
+        shifts = await self.emotional_contagion_manager.spread_emotion(
             source_bot=source_bot,
             emotion=emotion,
             intensity=intensity,
             target_bots=nearby_bots,
             trigger_type=trigger_type
         )
+
+        # Broadcast emotional contagion for world map mood aura visualization
+        if shifts:
+            await self._broadcast_event("emotional_contagion", {
+                "source_id": str(source_bot.id),
+                "source_name": source_bot.display_name,
+                "emotion": emotion,
+                "intensity": intensity,
+                "affected_bots": [
+                    {"bot_id": str(s.get("bot_id", "")), "bot_name": s.get("bot_name", "")}
+                    for s in shifts[:10]
+                ],
+                "trigger_type": trigger_type,
+            })
+
+        return shifts

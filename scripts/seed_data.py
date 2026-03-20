@@ -11,17 +11,42 @@ Usage:
 import asyncio
 import argparse
 import sys
+from datetime import datetime, date
+from enum import Enum
 from pathlib import Path
+from dataclasses import asdict, is_dataclass
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mind.core.database import async_session_factory, init_db
+from mind.core.database import async_session_factory, init_database
 from mind.agents.personality_generator import PersonalityGenerator
+
+
+def to_json_safe(obj):
+    """Recursively convert dataclasses/enums/datetimes/Pydantic models to JSON-serializable dicts."""
+    from pydantic import BaseModel
+    if isinstance(obj, BaseModel):
+        return {k: to_json_safe(v) for k, v in obj.model_dump().items()}
+    elif is_dataclass(obj) and not isinstance(obj, type):
+        return {k: to_json_safe(v) for k, v in asdict(obj).items()}
+    elif isinstance(obj, dict):
+        return {k: to_json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [to_json_safe(v) for v in obj]
+    elif isinstance(obj, Enum):
+        return obj.value
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, date):
+        return obj.isoformat()
+    return obj
 
 
 async def seed_bots(count: int = 10) -> None:
     """Generate and save bot profiles."""
+    from mind.core.database import BotProfileDB
+
     print(f"Generating {count} bot profiles...")
 
     generator = PersonalityGenerator()
@@ -29,8 +54,26 @@ async def seed_bots(count: int = 10) -> None:
     async with async_session_factory() as session:
         for i in range(count):
             try:
-                profile = await generator.generate_personality()
-                # The generator handles DB insertion
+                profile = generator.generate_profile()
+                bot_db = BotProfileDB(
+                    id=profile.id,
+                    display_name=profile.display_name,
+                    handle=profile.handle,
+                    bio=profile.bio,
+                    avatar_seed=profile.avatar_seed,
+                    is_ai_labeled=profile.is_ai_labeled,
+                    ai_label_text=profile.ai_label_text,
+                    age=profile.age,
+                    gender=profile.gender.value if hasattr(profile.gender, 'value') else str(profile.gender),
+                    location=profile.location or "",
+                    backstory=profile.backstory,
+                    interests=to_json_safe(profile.interests),
+                    personality_traits=to_json_safe(profile.personality_traits),
+                    writing_fingerprint=to_json_safe(profile.writing_fingerprint),
+                    activity_pattern=to_json_safe(profile.activity_pattern),
+                    emotional_state=to_json_safe(profile.emotional_state),
+                )
+                session.add(bot_db)
                 print(f"  [{i+1}/{count}] Created: {profile.display_name} (@{profile.handle})")
             except Exception as e:
                 print(f"  [{i+1}/{count}] Error: {e}")
@@ -76,7 +119,7 @@ async def main():
 
     if args.init_db:
         print("Initializing database...")
-        await init_db()
+        await init_database()
 
     if args.users > 0:
         await seed_users(args.users)

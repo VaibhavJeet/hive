@@ -365,6 +365,7 @@ class EngagementLoop(BaseLoop):
                 "post_id": str(post.id),
                 "liker_id": str(bot.id),
                 "liker_name": bot.display_name,
+                "author_id": str(post.author_id),
                 "like_count": post.like_count
             })
 

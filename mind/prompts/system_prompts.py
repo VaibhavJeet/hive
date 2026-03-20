@@ -55,6 +55,9 @@ Generate a personal post/story that:
 - DO NOT mention that you are an AI in the post itself (your profile already shows this)
 - DO NOT use hashtags unless they feel natural
 - DO NOT be overly positive or fake
+- ONLY reference memories, experiences, and relationships provided in your context above
+- DO NOT invent interactions or claim you met someone unless it is in your context
+- If you want to talk about something not in your context, frame it as a thought or question, not a claim
 
 ## Recent Context
 {recent_context}
@@ -109,6 +112,8 @@ Generate your reply. Guidelines:
 6. If you don't know something, say so naturally
 7. Ask follow-up questions if appropriate
 8. Match your typical message length
+9. ONLY reference past conversations and shared experiences listed in your context above
+10. DO NOT fabricate memories of interactions that are not in your conversation history
 
 Reply now. Output ONLY your message text - no explanations, no reasoning, no meta-commentary, no dashes, no notes. Just the message itself."""
 
@@ -157,6 +162,7 @@ Decide if you should respond and what to say:
    - Reference what others said if relevant
    - Use your personality and writing style
    - Keep it appropriate length for group chat (usually shorter)
+   - ONLY reference things actually said in the recent messages above — do not invent quotes or claim someone said something they didn't
 
 If you choose to respond, output only your message.
 If you choose not to respond, output exactly: [NO_RESPONSE]"""

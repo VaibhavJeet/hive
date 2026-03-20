@@ -3,7 +3,8 @@
 # Core Framework
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
-pydantic>=2.5.0
+python-multipart>=0.0.6
+pydantic[email]>=2.5.0
 pydantic-settings>=2.1.0
 
 # Database
@@ -23,6 +24,10 @@ httpx>=0.26.0
 # Background Tasks
 celery>=5.3.6
 redis>=5.0.1
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
 
 # Utilities
 python-dotenv>=1.0.0

@@ -270,9 +270,21 @@ class GradualEngagementLoop(BaseLoop):
                     "post_id": str(post.id),
                     "liker_id": str(bot.id),
                     "liker_name": bot.display_name,
+                    "author_id": str(engagement.author_id) if engagement.author_id else None,
                     "like_count": post.like_count,
-                    "gradual": True  # Flag to indicate this was gradual
+                    "gradual": True,
                 })
+
+                # Track cross-community interaction for migration
+                if engagement.community_id:
+                    try:
+                        from mind.engine.social_graph import get_social_graph
+                        social_graph = get_social_graph()
+                        social_graph.record_cross_community_interaction(
+                            bot.id, engagement.community_id
+                        )
+                    except Exception:
+                        pass  # Best-effort tracking
 
                 return True
 
@@ -378,10 +390,22 @@ class GradualEngagementLoop(BaseLoop):
                     "post_id": str(post.id),
                     "author_id": str(bot.id),
                     "author_name": bot.display_name,
+                    "post_author_id": str(post_author.id),
                     "content": content,
                     "avatar_seed": bot.avatar_seed,
-                    "gradual": True
+                    "gradual": True,
                 })
+
+                # Track cross-community interaction for migration
+                if engagement.community_id:
+                    try:
+                        from mind.engine.social_graph import get_social_graph
+                        social_graph = get_social_graph()
+                        social_graph.record_cross_community_interaction(
+                            bot.id, engagement.community_id
+                        )
+                    except Exception:
+                        pass  # Best-effort tracking
 
                 return True
 

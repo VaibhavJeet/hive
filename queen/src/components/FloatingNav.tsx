@@ -15,11 +15,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Zap,
+  Map,
 } from 'lucide-react'
 import { useConnectionStatus } from '@/contexts/WebSocketContext'
 
 const navItems = [
   { name: 'CIVILIZATION', href: '/', icon: Globe2, hot: true },
+  { name: 'WORLD MAP', href: '/world', icon: Map, hot: true },
   { name: 'BOTS', href: '/bots', icon: Bot },
   { name: 'CIRCLES', href: '/circles', icon: Users },
   { name: 'CULTURE', href: '/culture', icon: Sparkles },

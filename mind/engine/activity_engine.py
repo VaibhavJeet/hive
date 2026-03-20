@@ -46,6 +46,7 @@ from mind.engine.emotional_core import get_emotional_core_manager
 from mind.engine.conscious_mind import get_conscious_mind_manager
 from mind.engine.autonomous_behaviors import get_autonomous_behavior_manager
 from mind.engine.social_dynamics import get_relationship_manager
+from mind.engine.social_graph import get_social_graph
 from mind.stories.story_service import get_story_service
 from mind.stories.bot_stories import get_bot_story_generator
 from mind.civilization.civilization_loop import get_civilization_loop
@@ -259,7 +260,8 @@ class ActivityEngine:
         # Civilization loop - handles lifecycle, culture, reproduction
         self.civilization_loop = get_civilization_loop(
             llm_semaphore=self.llm_semaphore,
-            demo_mode=settings.DEMO_MODE if hasattr(settings, 'DEMO_MODE') else False
+            demo_mode=settings.DEMO_MODE if hasattr(settings, 'DEMO_MODE') else False,
+            event_broadcast=self.event_broadcast,
         )
 
     async def start(self, event_queue: Optional[asyncio.Queue] = None):
@@ -273,6 +275,10 @@ class ActivityEngine:
 
         # Initialize memory system
         self.memory_core = await get_memory_core()
+
+        # Initialize and refresh social graph
+        self.social_graph = get_social_graph()
+        await self.social_graph.refresh()
 
         # Initialize story service
         self.story_service = await get_story_service()

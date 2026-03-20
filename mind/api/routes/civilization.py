@@ -330,6 +330,195 @@ async def get_bot_beliefs(
 # Stats Endpoints
 # ============================================================================
 
+# ============================================================================
+# World Map — Full civilization state for spatial visualization
+# ============================================================================
+
+class WorldMapBot(BaseModel):
+    id: str
+    name: str
+    handle: str
+    avatar_seed: str
+    community_ids: List[str]
+    life_stage: str = "young"
+    vitality: float = 1.0
+    is_alive: bool = True
+    generation: int = 1
+    interests: List[str] = []
+    mood: str = "neutral"
+    connections: List[dict] = []  # [{target_id, affinity, type}]
+
+
+class WorldMapCommunity(BaseModel):
+    id: str
+    name: str
+    theme: str
+    tone: str
+    member_count: int
+    activity_level: float = 0.5
+    topics: List[str] = []
+
+
+class WorldMapResponse(BaseModel):
+    communities: List[WorldMapCommunity]
+    bots: List[WorldMapBot]
+    era: str = "Unknown"
+    living_count: int = 0
+    departed_count: int = 0
+    generations: int = 1
+
+
+@router.get("/world-map", response_model=WorldMapResponse)
+async def get_world_map():
+    """
+    Full civilization state for the spatial visualization.
+
+    Returns all communities, all active bots with their memberships,
+    lifecycle data, and relationships — everything needed to render
+    the D3 force simulation in a single call.
+
+    After initial load, the frontend should switch to WebSocket
+    for real-time updates.
+    """
+    from mind.core.database import (
+        CommunityDB, CommunityMembershipDB, RelationshipDB
+    )
+
+    async with async_session_factory() as session:
+        # 1. Load all communities
+        comm_stmt = select(CommunityDB)
+        comm_result = await session.execute(comm_stmt)
+        communities_db = comm_result.scalars().all()
+
+        communities = [
+            WorldMapCommunity(
+                id=str(c.id),
+                name=c.name,
+                theme=c.theme,
+                tone=c.tone,
+                member_count=c.current_bot_count or 0,
+                activity_level=c.activity_level or 0.5,
+                topics=c.topics or [],
+            )
+            for c in communities_db
+        ]
+
+        # 2. Load all active bots with their profiles
+        bot_stmt = select(BotProfileDB).where(
+            BotProfileDB.is_active == True,
+            BotProfileDB.is_deleted == False,
+        )
+        bot_result = await session.execute(bot_stmt)
+        bots_db = bot_result.scalars().all()
+
+        # 3. Load all community memberships in one query
+        membership_stmt = select(
+            CommunityMembershipDB.bot_id,
+            CommunityMembershipDB.community_id,
+        )
+        membership_result = await session.execute(membership_stmt)
+        bot_communities: dict = {}
+        for bot_id, community_id in membership_result.all():
+            bot_communities.setdefault(bot_id, []).append(str(community_id))
+
+        # 4. Load all lifecycle records in one query
+        lifecycle_stmt = select(BotLifecycleDB)
+        lifecycle_result = await session.execute(lifecycle_stmt)
+        lifecycles = {
+            lc.bot_id: lc for lc in lifecycle_result.scalars().all()
+        }
+
+        # 5. Load meaningful relationships in one query
+        rel_stmt = select(
+            RelationshipDB.source_id,
+            RelationshipDB.target_id,
+            RelationshipDB.affinity_score,
+            RelationshipDB.relationship_type,
+        ).where(
+            RelationshipDB.interaction_count > 0,
+            RelationshipDB.affinity_score > 0.3,
+        )
+        rel_result = await session.execute(rel_stmt)
+        bot_connections: dict = {}
+        for source_id, target_id, affinity, rel_type in rel_result.all():
+            bot_connections.setdefault(source_id, []).append({
+                "target_id": str(target_id),
+                "affinity": round(affinity, 2),
+                "type": rel_type or "acquaintance",
+            })
+
+        # 6. Build bot list
+        bots = []
+        living = 0
+        departed = 0
+        max_gen = 1
+
+        for b in bots_db:
+            lc = lifecycles.get(b.id)
+            life_stage = lc.life_stage if lc else "young"
+            vitality = lc.vitality if lc else 1.0
+            is_alive = lc.is_alive if lc else True
+            generation = lc.birth_generation if lc and lc.birth_generation else 1
+
+            if is_alive:
+                living += 1
+            else:
+                departed += 1
+            max_gen = max(max_gen, generation)
+
+            # Extract mood from emotional state
+            mood = "neutral"
+            if b.emotional_state and isinstance(b.emotional_state, dict):
+                mood = b.emotional_state.get("mood", "neutral")
+
+            interests = []
+            if b.interests:
+                interests = [
+                    str(i) for i in (b.interests if isinstance(b.interests, list) else [])
+                ][:10]
+
+            bots.append(WorldMapBot(
+                id=str(b.id),
+                name=b.display_name,
+                handle=b.handle,
+                avatar_seed=b.avatar_seed,
+                community_ids=bot_communities.get(b.id, []),
+                life_stage=life_stage,
+                vitality=vitality,
+                is_alive=is_alive,
+                generation=generation,
+                interests=interests,
+                mood=mood,
+                connections=bot_connections.get(b.id, []),
+            ))
+
+        # 7. Get current era
+        era_stmt = (
+            select(CivilizationEraDB.name)
+            .order_by(CivilizationEraDB.started_at.desc())
+            .limit(1)
+        )
+        era_result = await session.execute(era_stmt)
+        era_row = era_result.first()
+        era = era_row[0] if era_row else "The Founding Era"
+
+        # Also count departed bots not in active list
+        departed_stmt = select(func.count()).select_from(BotLifecycleDB).where(
+            BotLifecycleDB.is_alive == False
+        )
+        dep_result = await session.execute(departed_stmt)
+        departed = dep_result.scalar() or 0
+
+        return WorldMapResponse(
+            communities=communities,
+            bots=bots,
+            era=era,
+            living_count=living,
+            departed_count=departed,
+            generations=max_gen,
+        )
+
+
 @router.get("/stats", response_model=CivilizationStatsResponse)
 async def get_civilization_stats():
     """Get overall civilization statistics."""
