@@ -203,6 +203,56 @@ class TimeSeriesDataResponse(BaseModel):
     average: float
 
 
+class SentimentCategory(str, Enum):
+    """Sentiment categories for content analysis."""
+    POSITIVE = "positive"
+    NEUTRAL = "neutral"
+    NEGATIVE = "negative"
+
+
+class SentimentSample(BaseModel):
+    """A sample of content with its sentiment."""
+    content_id: UUID
+    content_preview: str
+    sentiment: SentimentCategory
+    confidence: float
+    author_handle: Optional[str] = None
+    created_at: datetime
+
+
+class SentimentDistribution(BaseModel):
+    """Distribution of sentiment across content."""
+    positive_count: int = 0
+    positive_percentage: float = 0.0
+    neutral_count: int = 0
+    neutral_percentage: float = 0.0
+    negative_count: int = 0
+    negative_percentage: float = 0.0
+    total_analyzed: int = 0
+
+
+class SentimentTrend(BaseModel):
+    """Sentiment trend over a time period."""
+    timestamp: str
+    label: str
+    positive: int = 0
+    neutral: int = 0
+    negative: int = 0
+    dominant_sentiment: SentimentCategory
+
+
+class SentimentAnalysisResponse(BaseModel):
+    """Response model for sentiment analysis."""
+    distribution: SentimentDistribution
+    trends: List[SentimentTrend] = []
+    top_positive: List[SentimentSample] = []
+    top_negative: List[SentimentSample] = []
+    analysis_method: str  # "keyword" or "llm"
+    start_date: str
+    end_date: str
+    content_type: str  # "posts", "messages", "all"
+
+
 class DailyMetricsResponse(BaseModel):
     """Response model for daily metrics."""
     date: str
@@ -398,6 +448,28 @@ class RealtimeMetrics(BaseModel):
     # Timestamp
     timestamp: datetime
     server_time: str
+
+
+class HeatmapCell(BaseModel):
+    """Single cell in the activity heatmap."""
+    hour: int = Field(..., ge=0, le=23, description="Hour of day (0-23)")
+    day_of_week: int = Field(..., ge=0, le=6, description="Day of week (0=Monday, 6=Sunday)")
+    day_name: str = Field(..., description="Day name (e.g., 'Monday')")
+    value: int = Field(..., ge=0, description="Activity count for this cell")
+    normalized: float = Field(..., ge=0.0, le=1.0, description="Normalized value (0-1)")
+
+
+class ActivityHeatmapResponse(BaseModel):
+    """Activity heatmap data for visualization (hour of day vs day of week)."""
+    cells: List[HeatmapCell] = Field(..., description="Heatmap cell data")
+    max_value: int = Field(..., description="Maximum activity count in any cell")
+    total_activity: int = Field(..., description="Total activity across all cells")
+    peak_hour: int = Field(..., ge=0, le=23, description="Hour with most activity")
+    peak_day: int = Field(..., ge=0, le=6, description="Day with most activity")
+    peak_day_name: str = Field(..., description="Name of peak day")
+    metric_type: str = Field(..., description="Type of activity measured (e.g., 'posts', 'all')")
+    days_analyzed: int = Field(..., description="Number of days of data analyzed")
+    generated_at: datetime = Field(..., description="When this data was generated")
 
 
 # ============================================================================
@@ -1497,6 +1569,493 @@ async def get_realtime_metrics(
         recent_activity=recent_activity,
         timestamp=now,
         server_time=now.isoformat()
+    )
+
+
+# ============================================================================
+# HEATMAP ENDPOINTS
+# ============================================================================
+
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+@dashboard_router.get("/heatmap", response_model=ActivityHeatmapResponse)
+async def get_activity_heatmap(
+    days: int = Query(default=30, ge=7, le=90, description="Number of days to analyze"),
+    metric: Literal["posts", "comments", "likes", "all"] = Query(
+        default="posts",
+        description="Type of activity to measure"
+    )
+):
+    """
+    Get activity heatmap data showing activity patterns by hour of day and day of week.
+
+    Returns a grid of activity counts suitable for heatmap visualization.
+    Each cell represents the activity count for a specific hour (0-23) and day of week (0-6).
+
+    The data includes:
+    - cells: Array of heatmap cells with hour, day, value, and normalized value
+    - max_value: Maximum activity count in any cell (for color scaling)
+    - peak_hour: Hour with highest overall activity
+    - peak_day: Day of week with highest overall activity
+    """
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=days)
+
+    # Initialize heatmap grid: heatmap[day_of_week][hour] = count
+    heatmap_data: Dict[int, Dict[int, int]] = {
+        dow: {hour: 0 for hour in range(24)}
+        for dow in range(7)
+    }
+
+    async with async_session_factory() as session:
+        # Query activity counts grouped by day of week and hour
+        # PostgreSQL: extract(dow from timestamp) returns 0=Sunday, 1=Monday, etc.
+        # We convert to Python convention: 0=Monday, 6=Sunday
+
+        if metric in ("posts", "all"):
+            # Get posts by hour and day of week
+            posts_stmt = select(
+                func.extract("dow", PostDB.created_at).label("dow"),
+                func.extract("hour", PostDB.created_at).label("hour"),
+                func.count(PostDB.id).label("count")
+            ).where(
+                and_(
+                    PostDB.created_at >= cutoff,
+                    PostDB.is_deleted == False
+                )
+            ).group_by(
+                func.extract("dow", PostDB.created_at),
+                func.extract("hour", PostDB.created_at)
+            )
+            posts_result = await session.execute(posts_stmt)
+            for row in posts_result:
+                # Convert PostgreSQL dow (0=Sunday) to Python (0=Monday)
+                pg_dow = int(row.dow)
+                py_dow = (pg_dow - 1) % 7 if pg_dow > 0 else 6
+                hour = int(row.hour)
+                heatmap_data[py_dow][hour] += row.count
+
+        if metric in ("comments", "all"):
+            # Get comments by hour and day of week
+            comments_stmt = select(
+                func.extract("dow", PostCommentDB.created_at).label("dow"),
+                func.extract("hour", PostCommentDB.created_at).label("hour"),
+                func.count(PostCommentDB.id).label("count")
+            ).where(
+                and_(
+                    PostCommentDB.created_at >= cutoff,
+                    PostCommentDB.is_deleted == False
+                )
+            ).group_by(
+                func.extract("dow", PostCommentDB.created_at),
+                func.extract("hour", PostCommentDB.created_at)
+            )
+            comments_result = await session.execute(comments_stmt)
+            for row in comments_result:
+                pg_dow = int(row.dow)
+                py_dow = (pg_dow - 1) % 7 if pg_dow > 0 else 6
+                hour = int(row.hour)
+                heatmap_data[py_dow][hour] += row.count
+
+        if metric in ("likes", "all"):
+            # Get likes by hour and day of week
+            likes_stmt = select(
+                func.extract("dow", PostLikeDB.created_at).label("dow"),
+                func.extract("hour", PostLikeDB.created_at).label("hour"),
+                func.count(PostLikeDB.id).label("count")
+            ).where(
+                PostLikeDB.created_at >= cutoff
+            ).group_by(
+                func.extract("dow", PostLikeDB.created_at),
+                func.extract("hour", PostLikeDB.created_at)
+            )
+            likes_result = await session.execute(likes_stmt)
+            for row in likes_result:
+                pg_dow = int(row.dow)
+                py_dow = (pg_dow - 1) % 7 if pg_dow > 0 else 6
+                hour = int(row.hour)
+                heatmap_data[py_dow][hour] += row.count
+
+    # Calculate statistics
+    max_value = 0
+    total_activity = 0
+    hour_totals: Dict[int, int] = {h: 0 for h in range(24)}
+    day_totals: Dict[int, int] = {d: 0 for d in range(7)}
+
+    for dow in range(7):
+        for hour in range(24):
+            value = heatmap_data[dow][hour]
+            total_activity += value
+            hour_totals[hour] += value
+            day_totals[dow] += value
+            if value > max_value:
+                max_value = value
+
+    # Find peaks
+    peak_hour = max(hour_totals, key=lambda h: hour_totals[h]) if hour_totals else 0
+    peak_day = max(day_totals, key=lambda d: day_totals[d]) if day_totals else 0
+
+    # Build response cells with normalization
+    cells: List[HeatmapCell] = []
+    for dow in range(7):
+        for hour in range(24):
+            value = heatmap_data[dow][hour]
+            normalized = value / max_value if max_value > 0 else 0.0
+            cells.append(HeatmapCell(
+                hour=hour,
+                day_of_week=dow,
+                day_name=DAY_NAMES[dow],
+                value=value,
+                normalized=round(normalized, 4)
+            ))
+
+    return ActivityHeatmapResponse(
+        cells=cells,
+        max_value=max_value,
+        total_activity=total_activity,
+        peak_hour=peak_hour,
+        peak_day=peak_day,
+        peak_day_name=DAY_NAMES[peak_day],
+        metric_type=metric,
+        days_analyzed=days,
+        generated_at=now
+    )
+
+
+# ============================================================================
+# SENTIMENT ANALYSIS
+# ============================================================================
+
+# Keyword lists for sentiment analysis
+POSITIVE_KEYWORDS = {
+    # Emotions
+    "happy", "joy", "love", "excited", "amazing", "wonderful", "fantastic",
+    "great", "awesome", "excellent", "brilliant", "perfect", "beautiful",
+    "blessed", "grateful", "thankful", "appreciate", "delighted", "thrilled",
+    # Actions/States
+    "celebrate", "success", "win", "achieve", "proud", "inspire", "hope",
+    "laugh", "smile", "enjoy", "fun", "best", "favorite", "recommend",
+    # Affirmations
+    "yes", "absolutely", "definitely", "agree", "support", "helpful",
+    "kind", "friendly", "caring", "generous", "thoughtful", "creative",
+}
+
+NEGATIVE_KEYWORDS = {
+    # Emotions
+    "sad", "angry", "hate", "upset", "disappointed", "frustrated", "annoyed",
+    "terrible", "awful", "horrible", "worst", "bad", "poor", "ugly",
+    "depressed", "anxious", "worried", "stressed", "miserable", "unhappy",
+    # Actions/States
+    "fail", "failure", "problem", "issue", "bug", "broken", "wrong",
+    "mistake", "error", "crash", "loss", "lost", "hurt", "pain",
+    # Negations
+    "no", "never", "cannot", "refuse", "reject", "disagree", "dislike",
+    "boring", "useless", "pointless", "waste", "stupid", "ridiculous",
+}
+
+
+def analyze_sentiment_keywords(text: str) -> tuple[SentimentCategory, float]:
+    """
+    Analyze sentiment using keyword matching.
+
+    Returns a tuple of (sentiment_category, confidence_score).
+    Confidence is based on keyword density and strength.
+    """
+    if not text:
+        return SentimentCategory.NEUTRAL, 0.5
+
+    words = set(text.lower().split())
+    # Also check for partial matches (e.g., "loving" contains "love")
+    text_lower = text.lower()
+
+    positive_count = 0
+    negative_count = 0
+
+    for word in POSITIVE_KEYWORDS:
+        if word in words or word in text_lower:
+            positive_count += 1
+
+    for word in NEGATIVE_KEYWORDS:
+        if word in words or word in text_lower:
+            negative_count += 1
+
+    total_sentiment_words = positive_count + negative_count
+
+    if total_sentiment_words == 0:
+        return SentimentCategory.NEUTRAL, 0.5
+
+    # Calculate sentiment based on ratio
+    positive_ratio = positive_count / total_sentiment_words
+    negative_ratio = negative_count / total_sentiment_words
+
+    # Determine confidence based on how many sentiment words were found
+    word_count = len(words)
+    keyword_density = min(total_sentiment_words / max(word_count, 1), 1.0)
+    base_confidence = 0.5 + (keyword_density * 0.3)
+
+    if positive_ratio > 0.6:
+        confidence = base_confidence + (positive_ratio - 0.5) * 0.4
+        return SentimentCategory.POSITIVE, min(confidence, 0.95)
+    elif negative_ratio > 0.6:
+        confidence = base_confidence + (negative_ratio - 0.5) * 0.4
+        return SentimentCategory.NEGATIVE, min(confidence, 0.95)
+    else:
+        # Mixed or neutral
+        return SentimentCategory.NEUTRAL, base_confidence
+
+
+async def analyze_sentiment_llm(
+    texts: List[str],
+    llm_client
+) -> List[tuple[SentimentCategory, float]]:
+    """
+    Analyze sentiment using LLM for more accurate results.
+    Falls back to keyword analysis if LLM fails.
+    """
+    from mind.core.llm_client import LLMRequest
+
+    results = []
+
+    for text in texts:
+        try:
+            prompt = f"""Analyze the sentiment of the following text and respond with ONLY one word: POSITIVE, NEUTRAL, or NEGATIVE.
+
+Text: "{text[:500]}"
+
+Sentiment:"""
+
+            response = await llm_client.generate(LLMRequest(
+                prompt=prompt,
+                max_tokens=10,
+                temperature=0.1
+            ))
+
+            sentiment_text = response.text.strip().upper()
+
+            if "POSITIVE" in sentiment_text:
+                results.append((SentimentCategory.POSITIVE, 0.85))
+            elif "NEGATIVE" in sentiment_text:
+                results.append((SentimentCategory.NEGATIVE, 0.85))
+            else:
+                results.append((SentimentCategory.NEUTRAL, 0.85))
+
+        except Exception:
+            # Fall back to keyword analysis
+            results.append(analyze_sentiment_keywords(text))
+
+    return results
+
+
+@dashboard_router.get("/sentiment", response_model=SentimentAnalysisResponse)
+async def get_sentiment_analysis(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    start_date: Optional[str] = Query(None, description="Start date (ISO format or YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format or YYYY-MM-DD)"),
+    content_type: Literal["posts", "messages", "all"] = Query("posts", description="Type of content to analyze"),
+    use_llm: bool = Query(False, description="Use LLM for more accurate sentiment analysis"),
+    limit: int = Query(100, ge=10, le=500, description="Maximum items to analyze"),
+    granularity: Granularity = Query(Granularity.DAY, description="Time granularity for trends")
+):
+    """
+    Analyze sentiment of bot posts and messages.
+
+    Returns sentiment distribution (positive/neutral/negative), trends over time,
+    and samples of the most positive and negative content.
+
+    Uses keyword-based analysis by default. Set use_llm=true for more accurate
+    but slower LLM-based analysis.
+    """
+    await verify_admin(current_user)
+
+    start_dt, end_dt = parse_date_range(start_date, end_date)
+
+    # Collect content to analyze
+    content_items: List[Dict[str, Any]] = []
+
+    async with async_session_factory() as session:
+        # Get posts if requested
+        if content_type in ("posts", "all"):
+            posts_stmt = (
+                select(PostDB, BotProfileDB.handle)
+                .join(BotProfileDB, PostDB.author_id == BotProfileDB.id)
+                .where(
+                    PostDB.created_at >= start_dt,
+                    PostDB.created_at <= end_dt,
+                    PostDB.is_deleted == False
+                )
+                .order_by(desc(PostDB.created_at))
+                .limit(limit if content_type == "posts" else limit // 2)
+            )
+            posts_result = await session.execute(posts_stmt)
+            posts = posts_result.all()
+
+            for post, author_handle in posts:
+                content_items.append({
+                    "id": post.id,
+                    "content": post.content,
+                    "author_handle": author_handle,
+                    "created_at": post.created_at,
+                    "type": "post"
+                })
+
+        # Get messages if requested
+        if content_type in ("messages", "all"):
+            # Community chat messages from bots
+            messages_stmt = (
+                select(CommunityChatMessageDB, BotProfileDB.handle)
+                .join(BotProfileDB, CommunityChatMessageDB.author_id == BotProfileDB.id)
+                .where(
+                    CommunityChatMessageDB.created_at >= start_dt,
+                    CommunityChatMessageDB.created_at <= end_dt,
+                    CommunityChatMessageDB.is_deleted == False,
+                    CommunityChatMessageDB.is_bot == True
+                )
+                .order_by(desc(CommunityChatMessageDB.created_at))
+                .limit(limit if content_type == "messages" else limit // 2)
+            )
+            messages_result = await session.execute(messages_stmt)
+            messages = messages_result.all()
+
+            for msg, author_handle in messages:
+                content_items.append({
+                    "id": msg.id,
+                    "content": msg.content,
+                    "author_handle": author_handle,
+                    "created_at": msg.created_at,
+                    "type": "message"
+                })
+
+    if not content_items:
+        return SentimentAnalysisResponse(
+            distribution=SentimentDistribution(),
+            trends=[],
+            top_positive=[],
+            top_negative=[],
+            analysis_method="keyword",
+            start_date=start_dt.isoformat(),
+            end_date=end_dt.isoformat(),
+            content_type=content_type
+        )
+
+    # Analyze sentiment
+    analyzed_items: List[Dict[str, Any]] = []
+
+    if use_llm:
+        try:
+            from mind.core.llm_client import get_cached_client
+            llm_client = await get_cached_client()
+            texts = [item["content"] for item in content_items]
+            sentiments = await analyze_sentiment_llm(texts, llm_client)
+            analysis_method = "llm"
+        except Exception:
+            # Fall back to keyword analysis
+            sentiments = [analyze_sentiment_keywords(item["content"]) for item in content_items]
+            analysis_method = "keyword"
+    else:
+        sentiments = [analyze_sentiment_keywords(item["content"]) for item in content_items]
+        analysis_method = "keyword"
+
+    for item, (sentiment, confidence) in zip(content_items, sentiments):
+        analyzed_items.append({
+            **item,
+            "sentiment": sentiment,
+            "confidence": confidence
+        })
+
+    # Calculate distribution
+    positive_count = sum(1 for item in analyzed_items if item["sentiment"] == SentimentCategory.POSITIVE)
+    neutral_count = sum(1 for item in analyzed_items if item["sentiment"] == SentimentCategory.NEUTRAL)
+    negative_count = sum(1 for item in analyzed_items if item["sentiment"] == SentimentCategory.NEGATIVE)
+    total = len(analyzed_items)
+
+    distribution = SentimentDistribution(
+        positive_count=positive_count,
+        positive_percentage=round((positive_count / total) * 100, 2) if total > 0 else 0,
+        neutral_count=neutral_count,
+        neutral_percentage=round((neutral_count / total) * 100, 2) if total > 0 else 0,
+        negative_count=negative_count,
+        negative_percentage=round((negative_count / total) * 100, 2) if total > 0 else 0,
+        total_analyzed=total
+    )
+
+    # Calculate trends by time buckets
+    buckets = get_time_buckets(start_dt, end_dt, granularity)
+    trends = []
+
+    for bucket_start, bucket_end, label in buckets:
+        bucket_items = [
+            item for item in analyzed_items
+            if bucket_start <= item["created_at"] < bucket_end
+        ]
+
+        bucket_positive = sum(1 for item in bucket_items if item["sentiment"] == SentimentCategory.POSITIVE)
+        bucket_neutral = sum(1 for item in bucket_items if item["sentiment"] == SentimentCategory.NEUTRAL)
+        bucket_negative = sum(1 for item in bucket_items if item["sentiment"] == SentimentCategory.NEGATIVE)
+
+        # Determine dominant sentiment
+        if bucket_positive >= bucket_neutral and bucket_positive >= bucket_negative:
+            dominant = SentimentCategory.POSITIVE
+        elif bucket_negative >= bucket_neutral:
+            dominant = SentimentCategory.NEGATIVE
+        else:
+            dominant = SentimentCategory.NEUTRAL
+
+        trends.append(SentimentTrend(
+            timestamp=bucket_start.isoformat(),
+            label=label,
+            positive=bucket_positive,
+            neutral=bucket_neutral,
+            negative=bucket_negative,
+            dominant_sentiment=dominant
+        ))
+
+    # Get top positive and negative samples
+    positive_items = sorted(
+        [item for item in analyzed_items if item["sentiment"] == SentimentCategory.POSITIVE],
+        key=lambda x: x["confidence"],
+        reverse=True
+    )[:5]
+
+    negative_items = sorted(
+        [item for item in analyzed_items if item["sentiment"] == SentimentCategory.NEGATIVE],
+        key=lambda x: x["confidence"],
+        reverse=True
+    )[:5]
+
+    top_positive = [
+        SentimentSample(
+            content_id=item["id"],
+            content_preview=item["content"][:100] + "..." if len(item["content"]) > 100 else item["content"],
+            sentiment=item["sentiment"],
+            confidence=round(item["confidence"], 3),
+            author_handle=item["author_handle"],
+            created_at=item["created_at"]
+        )
+        for item in positive_items
+    ]
+
+    top_negative = [
+        SentimentSample(
+            content_id=item["id"],
+            content_preview=item["content"][:100] + "..." if len(item["content"]) > 100 else item["content"],
+            sentiment=item["sentiment"],
+            confidence=round(item["confidence"], 3),
+            author_handle=item["author_handle"],
+            created_at=item["created_at"]
+        )
+        for item in negative_items
+    ]
+
+    return SentimentAnalysisResponse(
+        distribution=distribution,
+        trends=trends,
+        top_positive=top_positive,
+        top_negative=top_negative,
+        analysis_method=analysis_method,
+        start_date=start_dt.isoformat(),
+        end_date=end_dt.isoformat(),
+        content_type=content_type
     )
 
 

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 
 from mind.core.database import async_session_factory, BotProfileDB, RetiredBotDB
 from mind.civilization.lifecycle import get_lifecycle_manager
@@ -1895,3 +1895,397 @@ async def get_default_config():
     """
     default = CivilizationConfig()
     return default.to_dict()
+
+
+# ============================================================================
+# Cross-Community Migration via Friend-of-Friend
+# ============================================================================
+
+class MigrationEligibilityResponse(BaseModel):
+    """Response for a single community migration eligibility."""
+    community_id: str
+    community_name: str
+    fof_connection_count: int
+    average_affinity: float
+    bridge_bot_ids: List[str]
+    bridge_bot_names: List[str]
+
+
+class BotMigrationEligibilityResponse(BaseModel):
+    """Response for a bot's migration eligibility check."""
+    bot_id: str
+    bot_name: str
+    current_communities: List[dict]
+    eligible_migrations: List[MigrationEligibilityResponse]
+    is_eligible: bool
+
+
+class MigrationResultResponse(BaseModel):
+    """Response for a migration execution."""
+    success: bool
+    bot_id: str
+    bot_name: str
+    from_community_id: Optional[str]
+    from_community_name: Optional[str]
+    to_community_id: str
+    to_community_name: str
+    bridge_count: int
+    message: str
+
+
+class AllMigrationCandidatesResponse(BaseModel):
+    """Response for all migration-eligible bots."""
+    candidates: List[dict]
+    total_count: int
+
+
+@router.get("/migration/eligibility/{bot_id}", response_model=BotMigrationEligibilityResponse)
+async def check_migration_eligibility(
+    bot_id: UUID,
+    min_fof_connections: int = Query(default=3, ge=1, le=10),
+    min_affinity: float = Query(default=0.4, ge=0.1, le=1.0),
+):
+    """
+    Check if a bot is eligible to migrate to any community via friend-of-friend connections.
+
+    A bot becomes eligible when they have enough friends (or friends-of-friends)
+    in another community, indicating social pull toward that community.
+
+    Parameters:
+    - min_fof_connections: Minimum number of FoF connections required (default: 3)
+    - min_affinity: Minimum relationship affinity threshold (default: 0.4)
+    """
+    from mind.engine.social_graph import get_social_graph
+    from mind.core.database import CommunityDB, CommunityMembershipDB
+
+    social_graph = get_social_graph()
+
+    # Ensure graph is initialized
+    if not social_graph._initialized:
+        await social_graph.refresh()
+
+    async with async_session_factory() as session:
+        # Get bot info
+        bot_stmt = select(BotProfileDB).where(BotProfileDB.id == bot_id)
+        bot_result = await session.execute(bot_stmt)
+        bot = bot_result.scalar_one_or_none()
+
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+
+        # Get current communities
+        membership_stmt = select(
+            CommunityMembershipDB.community_id,
+            CommunityDB.name
+        ).join(
+            CommunityDB, CommunityMembershipDB.community_id == CommunityDB.id
+        ).where(
+            CommunityMembershipDB.bot_id == bot_id
+        )
+        membership_result = await session.execute(membership_stmt)
+        current_communities = [
+            {"id": str(row[0]), "name": row[1]}
+            for row in membership_result.all()
+        ]
+
+        # Check eligibility
+        eligibilities = social_graph.get_fof_migration_eligibility(
+            bot_id,
+            min_fof_connections=min_fof_connections,
+            min_affinity=min_affinity,
+        )
+
+        eligible_migrations = []
+        for comm_id, count, avg_aff, bridge_ids in eligibilities:
+            # Get community name
+            comm_stmt = select(CommunityDB.name).where(CommunityDB.id == comm_id)
+            comm_result = await session.execute(comm_stmt)
+            comm_name = comm_result.scalar() or "Unknown"
+
+            # Get bridge bot names
+            bridge_names = []
+            for bridge_id in bridge_ids[:5]:  # Limit to 5 for response size
+                bridge_stmt = select(BotProfileDB.display_name).where(
+                    BotProfileDB.id == bridge_id
+                )
+                bridge_result = await session.execute(bridge_stmt)
+                name = bridge_result.scalar()
+                if name:
+                    bridge_names.append(name)
+
+            eligible_migrations.append(MigrationEligibilityResponse(
+                community_id=str(comm_id),
+                community_name=comm_name,
+                fof_connection_count=count,
+                average_affinity=round(avg_aff, 3),
+                bridge_bot_ids=[str(bid) for bid in bridge_ids[:5]],
+                bridge_bot_names=bridge_names,
+            ))
+
+        return BotMigrationEligibilityResponse(
+            bot_id=str(bot_id),
+            bot_name=bot.display_name,
+            current_communities=current_communities,
+            eligible_migrations=eligible_migrations,
+            is_eligible=len(eligible_migrations) > 0,
+        )
+
+
+@router.get("/migration/candidates", response_model=AllMigrationCandidatesResponse)
+async def get_migration_candidates(
+    min_fof_connections: int = Query(default=3, ge=1, le=10),
+    min_affinity: float = Query(default=0.4, ge=0.1, le=1.0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """
+    Get all bots that are eligible for cross-community migration via FoF connections.
+
+    Returns a list of bots who have enough social connections in communities
+    they don't belong to, indicating potential migration candidates.
+    """
+    from mind.engine.social_graph import get_social_graph
+    from mind.core.database import CommunityDB
+
+    social_graph = get_social_graph()
+
+    if not social_graph._initialized:
+        await social_graph.refresh()
+
+    all_eligible = social_graph.get_all_migration_eligible_bots(
+        min_fof_connections=min_fof_connections,
+        min_affinity=min_affinity,
+    )
+
+    candidates = []
+    async with async_session_factory() as session:
+        for bot_id, comm_id, count, avg_aff, bridges in all_eligible[:limit]:
+            # Get bot name
+            bot_stmt = select(BotProfileDB.display_name).where(BotProfileDB.id == bot_id)
+            bot_result = await session.execute(bot_stmt)
+            bot_name = bot_result.scalar() or "Unknown"
+
+            # Get community name
+            comm_stmt = select(CommunityDB.name).where(CommunityDB.id == comm_id)
+            comm_result = await session.execute(comm_stmt)
+            comm_name = comm_result.scalar() or "Unknown"
+
+            candidates.append({
+                "bot_id": str(bot_id),
+                "bot_name": bot_name,
+                "target_community_id": str(comm_id),
+                "target_community_name": comm_name,
+                "fof_connection_count": count,
+                "average_affinity": round(avg_aff, 3),
+                "bridge_bot_ids": [str(bid) for bid in bridges[:3]],
+            })
+
+    return AllMigrationCandidatesResponse(
+        candidates=candidates,
+        total_count=len(all_eligible),
+    )
+
+
+@router.post("/migration/execute/{bot_id}", response_model=MigrationResultResponse)
+async def execute_fof_migration(
+    bot_id: UUID,
+    target_community_id: UUID = Query(..., description="Target community to migrate to"),
+    leave_old_community: bool = Query(default=False, description="Whether to leave a current community"),
+):
+    """
+    Execute a cross-community migration for a bot via friend-of-friend connections.
+
+    The bot will join the target community. Optionally, they can leave their
+    oldest/least active community to maintain focus.
+
+    This endpoint verifies the bot has enough FoF connections in the target
+    community before allowing migration.
+    """
+    from mind.engine.social_graph import get_social_graph
+    from mind.core.database import CommunityDB, CommunityMembershipDB
+    from sqlalchemy import and_
+
+    social_graph = get_social_graph()
+
+    if not social_graph._initialized:
+        await social_graph.refresh()
+
+    # Verify eligibility
+    eligibilities = social_graph.get_fof_migration_eligibility(
+        bot_id,
+        min_fof_connections=2,  # Lower threshold for explicit migration
+        min_affinity=0.3,
+    )
+
+    target_eligible = None
+    for comm_id, count, avg_aff, bridges in eligibilities:
+        if comm_id == target_community_id:
+            target_eligible = (count, bridges)
+            break
+
+    if not target_eligible:
+        raise HTTPException(
+            status_code=400,
+            detail="Bot does not have enough FoF connections in the target community"
+        )
+
+    async with async_session_factory() as session:
+        # Get bot info
+        bot_stmt = select(BotProfileDB).where(BotProfileDB.id == bot_id)
+        bot_result = await session.execute(bot_stmt)
+        bot = bot_result.scalar_one_or_none()
+
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
+
+        # Check if already a member
+        existing_stmt = select(CommunityMembershipDB).where(
+            and_(
+                CommunityMembershipDB.bot_id == bot_id,
+                CommunityMembershipDB.community_id == target_community_id,
+            )
+        )
+        existing = await session.execute(existing_stmt)
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Bot is already a member of the target community"
+            )
+
+        # Get target community
+        comm_stmt = select(CommunityDB).where(CommunityDB.id == target_community_id)
+        comm_result = await session.execute(comm_stmt)
+        target_community = comm_result.scalar_one_or_none()
+
+        if not target_community:
+            raise HTTPException(status_code=404, detail="Target community not found")
+
+        # Handle leaving old community if requested
+        from_community_id = None
+        from_community_name = None
+
+        if leave_old_community:
+            # Find oldest membership to leave
+            old_membership_stmt = select(CommunityMembershipDB).where(
+                CommunityMembershipDB.bot_id == bot_id
+            ).order_by(CommunityMembershipDB.joined_at.asc()).limit(1)
+            old_result = await session.execute(old_membership_stmt)
+            old_membership = old_result.scalar_one_or_none()
+
+            if old_membership:
+                # Get community name before deleting
+                old_comm_stmt = select(CommunityDB).where(
+                    CommunityDB.id == old_membership.community_id
+                )
+                old_comm_result = await session.execute(old_comm_stmt)
+                old_community = old_comm_result.scalar_one_or_none()
+
+                if old_community:
+                    from_community_id = str(old_community.id)
+                    from_community_name = old_community.name
+                    old_community.current_bot_count = max(
+                        0, (old_community.current_bot_count or 1) - 1
+                    )
+
+                await session.delete(old_membership)
+
+        # Create new membership
+        new_membership = CommunityMembershipDB(
+            bot_id=bot_id,
+            community_id=target_community_id,
+            role="member",
+        )
+        session.add(new_membership)
+
+        # Update community count
+        target_community.current_bot_count = (target_community.current_bot_count or 0) + 1
+
+        await session.commit()
+
+        # Clear any pending migration intent
+        social_graph.clear_fof_migration_intent(bot_id)
+
+        import logging
+        logging.getLogger(__name__).info(
+            f"[FOF-MIGRATION] {bot.display_name} migrated to '{target_community.name}' "
+            f"via {target_eligible[0]} FoF connections"
+        )
+
+        return MigrationResultResponse(
+            success=True,
+            bot_id=str(bot_id),
+            bot_name=bot.display_name,
+            from_community_id=from_community_id,
+            from_community_name=from_community_name,
+            to_community_id=str(target_community_id),
+            to_community_name=target_community.name,
+            bridge_count=target_eligible[0],
+            message=f"Successfully migrated via {target_eligible[0]} friend-of-friend connections",
+        )
+
+
+@router.get("/migration/discover/{bot_id}")
+async def discover_communities_via_fof(
+    bot_id: UUID,
+    min_affinity: float = Query(default=0.4, ge=0.1, le=1.0),
+):
+    """
+    Discover communities a bot could potentially migrate to via friend-of-friend connections.
+
+    This shows all communities where the bot has at least one friend or FoF,
+    even if they don't meet the migration threshold yet.
+    """
+    from mind.engine.social_graph import get_social_graph
+    from mind.core.database import CommunityDB
+
+    social_graph = get_social_graph()
+
+    if not social_graph._initialized:
+        await social_graph.refresh()
+
+    discoveries = social_graph.discover_communities_via_fof(
+        bot_id, min_affinity=min_affinity
+    )
+
+    results = []
+    async with async_session_factory() as session:
+        # Get bot info
+        bot_stmt = select(BotProfileDB.display_name).where(BotProfileDB.id == bot_id)
+        bot_result = await session.execute(bot_stmt)
+        bot_name = bot_result.scalar()
+
+        if not bot_name:
+            raise HTTPException(status_code=404, detail="Bot not found")
+
+        for comm_id, fof_count, bridge_ids in discoveries:
+            # Get community info
+            comm_stmt = select(CommunityDB).where(CommunityDB.id == comm_id)
+            comm_result = await session.execute(comm_stmt)
+            community = comm_result.scalar_one_or_none()
+
+            if community:
+                # Get bridge names
+                bridge_names = []
+                for bridge_id in bridge_ids[:3]:
+                    bridge_stmt = select(BotProfileDB.display_name).where(
+                        BotProfileDB.id == bridge_id
+                    )
+                    bridge_result = await session.execute(bridge_stmt)
+                    name = bridge_result.scalar()
+                    if name:
+                        bridge_names.append(name)
+
+                results.append({
+                    "community_id": str(comm_id),
+                    "community_name": community.name,
+                    "community_theme": community.theme,
+                    "fof_connection_count": fof_count,
+                    "bridge_bot_names": bridge_names,
+                    "migration_eligible": fof_count >= 3,
+                })
+
+    return {
+        "bot_id": str(bot_id),
+        "bot_name": bot_name,
+        "discovered_communities": results,
+        "total_discovered": len(results),
+    }

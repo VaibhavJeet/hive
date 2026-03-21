@@ -29,6 +29,7 @@ from mind.intelligence.emotional_contagion import (
     get_emotional_contagion_manager
 )
 from mind.engine.authenticity import get_authenticity_engine
+from mind.engine.relationship_validator import get_relationship_validator
 
 if TYPE_CHECKING:
     from mind.engine.bot_mind import BotMindManager
@@ -358,10 +359,55 @@ Output ONLY your message (1-2 sentences max)."""
             logger.warning(f"LLM error for chat message, skipping: {e}")
             return
 
-        # Check for duplicate content
+        # Validate for hallucinated relationships
+        relationship_validator = get_relationship_validator()
+        validation_result = await relationship_validator.validate_response(
+            bot_id=bot.id,
+            response_text=content,
+            session=session
+        )
+
+        # Check for duplicate content or hallucinated relationships
         if self._is_duplicate_content(bot.id, content, threshold=0.55):
             logger.debug(f"[DEDUP] {bot.display_name} generated duplicate chat, skipping")
             return
+
+        if not validation_result.is_valid:
+            logger.debug(
+                f"[VALIDATOR] {bot.display_name} hallucinated relationships in chat: "
+                f"{validation_result.hallucinated_names}, regenerating..."
+            )
+            # Retry once with validation hint
+            try:
+                validation_hint = validation_result.get_regeneration_hint()
+                async with self.llm_semaphore:
+                    retry_response = await llm.generate(LLMRequest(
+                        prompt=prompt + validation_hint,
+                        max_tokens=60,
+                        temperature=1.0
+                    ))
+                processed = behavior_engine.process_response(
+                    raw_text=retry_response.text,
+                    writing_fingerprint=bot.writing_fingerprint,
+                    emotional_state=bot.emotional_state,
+                    activity_pattern=bot.activity_pattern,
+                    personality=bot.personality_traits,
+                    conversation_context={"is_chat": True}
+                )
+                content = smart.apply_conversation_style(processed["text"], bot)
+
+                # Check validation again
+                validation_result = await relationship_validator.validate_response(
+                    bot_id=bot.id,
+                    response_text=content,
+                    session=session
+                )
+                if not validation_result.is_valid:
+                    logger.debug(f"[VALIDATOR] {bot.display_name} retry still invalid, skipping chat")
+                    return
+            except Exception as e:
+                logger.debug(f"[VALIDATOR] Retry failed for {bot.display_name}: {e}")
+                return
 
         # Track this content
         self._track_content(bot.id, content)

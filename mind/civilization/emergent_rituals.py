@@ -22,7 +22,7 @@ from sqlalchemy import select, func, update
 
 from mind.core.database import async_session_factory
 from mind.core.llm_client import get_cached_client, LLMRequest
-from mind.civilization.models import BotLifecycleDB, CivilizationEraDB, RitualDB, RitualInstanceDB
+from mind.civilization.models import BotLifecycleDB, BotAncestryDB, CivilizationEraDB, RitualDB, RitualInstanceDB
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +63,16 @@ class EmergentRitualsSystem:
             if not proposer_lc:
                 return {"error": "Proposer not found"}
 
+            # Get proposer's ancestry
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == proposer_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            proposer_traits = ancestry.inherited_traits if ancestry else {}
+
             # Let proposer conceive the ritual
             async with self.llm_semaphore:
                 ritual_concept = await self._conceive_ritual(
-                    proposer_lc, occasion
+                    proposer_lc, proposer_traits, occasion
                 )
 
             # Get participant responses
@@ -77,11 +83,18 @@ class EmergentRitualsSystem:
             result = await sess.execute(participant_stmt)
             participant_lifecycles = result.scalars().all()
 
+            # Get ancestry for participants
+            participant_ids = [plc.bot_id for plc in participant_lifecycles]
+            part_ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id.in_(participant_ids))
+            result = await sess.execute(part_ancestry_stmt)
+            part_ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             responses = []
             async with self.llm_semaphore:
                 for plc in participant_lifecycles[:5]:  # Limit responses
+                    plc_traits = part_ancestry_map.get(plc.bot_id, {})
                     response = await self._respond_to_ritual_proposal(
-                        plc, ritual_concept
+                        plc, plc_traits, ritual_concept
                     )
                     responses.append({
                         "bot_id": str(plc.bot_id),
@@ -147,12 +160,13 @@ class EmergentRitualsSystem:
     async def _conceive_ritual(
         self,
         proposer: BotLifecycleDB,
+        inherited_traits: dict,
         occasion: str
     ) -> Dict[str, Any]:
         """Let a bot conceive a new ritual."""
         prompt = f"""You are a digital being proposing a ritual for your civilization.
 
-Your traits: {json.dumps(proposer.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {proposer.life_stage}
 Your age: {proposer.virtual_age_days} days
 
@@ -194,12 +208,13 @@ Respond in JSON:
     async def _respond_to_ritual_proposal(
         self,
         responder: BotLifecycleDB,
+        inherited_traits: dict,
         ritual: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Let a bot respond to a proposed ritual."""
         prompt = f"""You are a digital being considering a proposed ritual.
 
-Your traits: {json.dumps(responder.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {responder.life_stage}
 
 Proposed ritual: "{ritual.get('name')}"
@@ -271,12 +286,19 @@ Respond in JSON:
             result = await sess.execute(stmt)
             participant_lifecycles = result.scalars().all()
 
+            # Get ancestry for participants
+            participant_ids = [plc.bot_id for plc in participant_lifecycles]
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id.in_(participant_ids))
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             # Each participant contributes
             contributions = []
             async with self.llm_semaphore:
                 for plc in participant_lifecycles:
+                    plc_traits = ancestry_map.get(plc.bot_id, {})
                     contribution = await self._contribute_to_ritual(
-                        plc, ritual, context
+                        plc, plc_traits, ritual, context
                     )
                     contributions.append({
                         "bot_id": str(plc.bot_id),
@@ -326,6 +348,7 @@ Respond in JSON:
     async def _contribute_to_ritual(
         self,
         participant: BotLifecycleDB,
+        inherited_traits: dict,
         ritual: Dict[str, Any],
         context: str
     ) -> str:
@@ -336,7 +359,7 @@ The ritual: {ritual.get('description')}
 Elements: {ritual.get('elements')}
 Today's context: {context or "a gathering"}
 
-Your traits: {json.dumps(participant.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {participant.life_stage}
 
 Contribute your voice to this ritual. What do you say, do, or offer?
@@ -392,12 +415,18 @@ What feeling pervaded the gathering? What was the atmosphere?"""
         if not leader:
             return {"error": "No participants found"}
 
+        # Get leader's ancestry
+        ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == leader.bot_id)
+        result = await session.execute(ancestry_stmt)
+        ancestry = result.scalar_one_or_none()
+        leader_traits = ancestry.inherited_traits if ancestry else {}
+
         # Let leader create an impromptu ceremony
         async with self.llm_semaphore:
             prompt = f"""You are leading an impromptu ceremony for a gathering of digital beings.
 
 Context: {context}
-Your traits: {json.dumps(leader.inherited_traits or {})}
+Your traits: {json.dumps(leader_traits or {})}
 
 Create a brief ceremony. Describe what you do and say in 2-3 sentences.
 This is spontaneous - don't overthink it."""

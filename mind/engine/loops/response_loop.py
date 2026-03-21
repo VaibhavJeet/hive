@@ -25,6 +25,7 @@ from mind.engine.smart_behaviors import get_smart_behaviors
 from mind.engine.loops.base_loop import BaseLoop
 from mind.engine.realistic_behaviors import get_realistic_behavior_manager
 from mind.engine.authenticity import get_authenticity_engine
+from mind.engine.relationship_validator import get_relationship_validator, ValidationResult
 from mind.config.settings import settings
 
 if TYPE_CHECKING:
@@ -266,27 +267,70 @@ Reply as YOURSELF - a complete individual with your own mind:
 Output ONLY your reply (1-3 sentences)."""
 
                 logger.info(f"Calling LLM for {bot.display_name} DM response...")
-                llm = await get_cached_client()
-                response = await llm.generate(LLMRequest(
-                    prompt=prompt,
-                    max_tokens=100,
-                    temperature=0.95  # Higher for variety
-                ))
-                logger.info(f"LLM response received for {bot.display_name}: {response.text[:50]}...")
 
-                # Apply human behavior
-                behavior_engine = create_human_behavior_engine()
-                processed = behavior_engine.process_response(
-                    raw_text=response.text,
-                    writing_fingerprint=bot.writing_fingerprint,
-                    emotional_state=bot.emotional_state,
-                    activity_pattern=bot.activity_pattern,
-                    personality=bot.personality_traits,
-                    conversation_context={"is_direct_message": True}
-                )
+                # Initialize relationship validator
+                validator = get_relationship_validator()
 
-                # Apply smart conversation style for extra humanity
-                final_text = smart.apply_conversation_style(processed["text"], bot)
+                # Generate response with validation - retry on hallucinated relationships
+                final_text = None
+                max_validation_attempts = 3
+                validation_hint = ""
+
+                for attempt in range(max_validation_attempts):
+                    # Build prompt with validation hint if regenerating
+                    current_prompt = prompt
+                    if validation_hint:
+                        current_prompt = prompt.replace(
+                            "Output ONLY your reply (1-3 sentences).",
+                            f"{validation_hint}\n\nOutput ONLY your reply (1-3 sentences)."
+                        )
+
+                    llm = await get_cached_client()
+                    response = await llm.generate(LLMRequest(
+                        prompt=current_prompt,
+                        max_tokens=100,
+                        temperature=min(0.95 + (attempt * 0.02), 1.0)  # Increase temp on retries
+                    ))
+                    logger.info(f"LLM response received for {bot.display_name}: {response.text[:50]}...")
+
+                    # Apply human behavior
+                    behavior_engine = create_human_behavior_engine()
+                    processed = behavior_engine.process_response(
+                        raw_text=response.text,
+                        writing_fingerprint=bot.writing_fingerprint,
+                        emotional_state=bot.emotional_state,
+                        activity_pattern=bot.activity_pattern,
+                        personality=bot.personality_traits,
+                        conversation_context={"is_direct_message": True}
+                    )
+
+                    # Apply smart conversation style for extra humanity
+                    candidate_text = smart.apply_conversation_style(processed["text"], bot)
+
+                    # Validate for hallucinated relationships
+                    validation_result = await validator.validate_response(
+                        bot_id=bot_id,
+                        response_text=candidate_text,
+                        session=session
+                    )
+
+                    if validation_result.is_valid:
+                        final_text = candidate_text
+                        break
+                    else:
+                        logger.warning(
+                            f"[VALIDATOR] {bot.display_name} attempt {attempt + 1}: "
+                            f"hallucinated relationships with {validation_result.hallucinated_names}"
+                        )
+                        validation_hint = validation_result.get_regeneration_hint()
+
+                # Use last attempt if all validations failed
+                if final_text is None:
+                    logger.warning(
+                        f"[VALIDATOR] {bot.display_name} exhausted {max_validation_attempts} attempts, "
+                        f"using last response"
+                    )
+                    final_text = candidate_text
 
                 # Check for overly repetitive DM responses (use higher threshold for DMs)
                 if self._is_duplicate_content(bot_id, final_text, threshold=0.7):
@@ -463,7 +507,7 @@ Output ONLY your reply (1-3 sentences)."""
                     for msg in reversed(recent_messages):
                         chat_context += f"- {msg.content[:60]}...\n"
 
-                    # Generate response
+                    # Generate response with relationship validation
                     prompt = f"""You are {bot.display_name}, {bot.bio[:100]}
 
 Recent chat in this community:
@@ -474,25 +518,61 @@ A user just said: "{content}"
 Reply naturally as yourself in 1-2 sentences. Be conversational and engaging.
 Output ONLY your reply."""
 
-                    llm = await get_cached_client()
-                    response = await llm.generate(LLMRequest(
-                        prompt=prompt,
-                        max_tokens=80,
-                        temperature=0.9
-                    ))
+                    # Initialize relationship validator
+                    validator = get_relationship_validator()
 
-                    # Apply human behavior
-                    behavior_engine = create_human_behavior_engine()
-                    processed = behavior_engine.process_response(
-                        raw_text=response.text,
-                        writing_fingerprint=bot.writing_fingerprint,
-                        emotional_state=bot.emotional_state,
-                        activity_pattern=bot.activity_pattern,
-                        personality=bot.personality_traits,
-                        conversation_context={"is_chat": True}
-                    )
+                    final_text = None
+                    max_validation_attempts = 2
+                    validation_hint = ""
 
-                    final_text = smart.apply_conversation_style(processed["text"], bot)
+                    for attempt in range(max_validation_attempts):
+                        current_prompt = prompt
+                        if validation_hint:
+                            current_prompt = prompt.replace(
+                                "Output ONLY your reply.",
+                                f"{validation_hint}\n\nOutput ONLY your reply."
+                            )
+
+                        llm = await get_cached_client()
+                        response = await llm.generate(LLMRequest(
+                            prompt=current_prompt,
+                            max_tokens=80,
+                            temperature=min(0.9 + (attempt * 0.05), 1.0)
+                        ))
+
+                        # Apply human behavior
+                        behavior_engine = create_human_behavior_engine()
+                        processed = behavior_engine.process_response(
+                            raw_text=response.text,
+                            writing_fingerprint=bot.writing_fingerprint,
+                            emotional_state=bot.emotional_state,
+                            activity_pattern=bot.activity_pattern,
+                            personality=bot.personality_traits,
+                            conversation_context={"is_chat": True}
+                        )
+
+                        candidate_text = smart.apply_conversation_style(processed["text"], bot)
+
+                        # Validate for hallucinated relationships
+                        validation_result = await validator.validate_response(
+                            bot_id=bot_id,
+                            response_text=candidate_text,
+                            session=session
+                        )
+
+                        if validation_result.is_valid:
+                            final_text = candidate_text
+                            break
+                        else:
+                            logger.debug(
+                                f"[VALIDATOR] {bot.display_name} chat attempt {attempt + 1}: "
+                                f"hallucinated {validation_result.hallucinated_names}"
+                            )
+                            validation_hint = validation_result.get_regeneration_hint()
+
+                    # Use last attempt if all failed
+                    if final_text is None:
+                        final_text = candidate_text
 
                     # Save to database
                     message = CommunityChatMessageDB(

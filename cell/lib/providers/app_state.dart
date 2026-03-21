@@ -281,8 +281,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<Post> createPost({required String content, required String communityId}) async {
-    final post = await feedProvider.createPost(content: content, communityId: communityId);
+  Future<Post> createPost({required String content, required String communityId, dynamic image}) async {
+    final post = await feedProvider.createPost(content: content, communityId: communityId, image: image);
     notifyListeners();
     return post;
   }

@@ -32,6 +32,7 @@ from mind.engine.realistic_behaviors import (
     get_realistic_behavior_manager,
     ScheduledEngagement
 )
+from mind.engine.relationship_validator import get_relationship_validator
 from mind.config.settings import settings
 
 if TYPE_CHECKING:
@@ -475,6 +476,45 @@ Output ONLY your comment."""
             # Apply smart conversation style
             smart = get_smart_behaviors()
             content = smart.apply_conversation_style(processed["text"], bot)
+
+            # Validate for hallucinated relationships
+            relationship_validator = get_relationship_validator()
+            validation_result = await relationship_validator.validate_response(
+                bot_id=bot.id,
+                response_text=content
+            )
+
+            if not validation_result.is_valid:
+                logger.debug(
+                    f"[GRADUAL/VALIDATOR] {bot.display_name} hallucinated relationships: "
+                    f"{validation_result.hallucinated_names}, regenerating..."
+                )
+                # Retry once with validation hint
+                validation_hint = validation_result.get_regeneration_hint()
+                async with self.llm_semaphore:
+                    retry_response = await llm.generate(LLMRequest(
+                        prompt=prompt + validation_hint,
+                        max_tokens=50,
+                        temperature=1.0
+                    ))
+                processed = behavior_engine.process_response(
+                    raw_text=retry_response.text,
+                    writing_fingerprint=bot.writing_fingerprint,
+                    emotional_state=bot.emotional_state,
+                    activity_pattern=bot.activity_pattern,
+                    personality=bot.personality_traits,
+                    conversation_context={"is_comment": True}
+                )
+                content = smart.apply_conversation_style(processed["text"], bot)
+
+                # Check validation again, skip if still invalid
+                validation_result = await relationship_validator.validate_response(
+                    bot_id=bot.id,
+                    response_text=content
+                )
+                if not validation_result.is_valid:
+                    logger.debug(f"[GRADUAL/VALIDATOR] {bot.display_name} retry still invalid, skipping")
+                    return None
 
             # Track for deduplication
             self._track_content(bot.id, content)

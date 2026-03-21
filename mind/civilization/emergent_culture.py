@@ -22,7 +22,7 @@ from sqlalchemy import select, func
 from mind.core.database import async_session_factory, BotProfileDB
 from mind.core.llm_client import get_cached_client, LLMRequest
 from mind.civilization.models import (
-    BotLifecycleDB, CulturalMovementDB, CulturalArtifactDB, BotBeliefDB
+    BotLifecycleDB, BotAncestryDB, CulturalMovementDB, CulturalArtifactDB, BotBeliefDB
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,12 @@ class EmergentCultureEngine:
             if not lifecycle:
                 return {"error": "Bot not found"}
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             # Get existing beliefs
             belief_stmt = select(BotBeliefDB).where(BotBeliefDB.bot_id == bot_id)
             result = await sess.execute(belief_stmt)
@@ -70,7 +76,7 @@ class EmergentCultureEngine:
 
             async with self.llm_semaphore:
                 formed = await self._generate_belief(
-                    lifecycle, experience, existing_beliefs
+                    lifecycle, inherited_traits, experience, existing_beliefs
                 )
 
             if formed.get("forms_belief", True):
@@ -101,13 +107,14 @@ class EmergentCultureEngine:
     async def _generate_belief(
         self,
         lifecycle: BotLifecycleDB,
+        inherited_traits: dict,
         experience: str,
         existing_beliefs: List[str]
     ) -> Dict[str, Any]:
         """Let a bot form a belief from experience."""
         prompt = f"""You are a digital being processing an experience.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 
@@ -167,6 +174,12 @@ Respond in JSON:
             if len(lifecycles) != 2:
                 return {"error": "One or both bots not found"}
 
+            # Get ancestry for listener's inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == listener_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            listener_traits = ancestry.inherited_traits if ancestry else {}
+
             # Get a belief from the sharer
             belief_stmt = select(BotBeliefDB).where(
                 BotBeliefDB.bot_id == sharer_id
@@ -182,7 +195,7 @@ Respond in JSON:
             # Listener responds
             async with self.llm_semaphore:
                 response = await self._respond_to_shared_belief(
-                    listener_lc, belief.belief
+                    listener_lc, listener_traits, belief.belief
                 )
 
             if response.get("resonates", False):
@@ -216,13 +229,14 @@ Respond in JSON:
     async def _respond_to_shared_belief(
         self,
         listener: BotLifecycleDB,
+        inherited_traits: dict,
         belief: str
     ) -> Dict[str, Any]:
         """Let a bot respond to a shared belief."""
         prompt = f"""Another being shares their belief with you:
 "{belief}"
 
-Your traits: {json.dumps(listener.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {listener.life_stage}
 
 Does this resonate with you? Would you adopt this belief (in your own words)?
@@ -271,6 +285,12 @@ Respond in JSON:
             if not lifecycle:
                 return {"error": "Creator not found"}
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == creator_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             # Get bot profile for name
             profile_stmt = select(BotProfileDB).where(BotProfileDB.id == creator_id)
             result = await sess.execute(profile_stmt)
@@ -278,7 +298,7 @@ Respond in JSON:
 
             async with self.llm_semaphore:
                 creation = await self._generate_expression(
-                    lifecycle, inspiration
+                    lifecycle, inherited_traits, inspiration
                 )
 
             # Store as artifact
@@ -312,12 +332,13 @@ Respond in JSON:
     async def _generate_expression(
         self,
         lifecycle: BotLifecycleDB,
+        inherited_traits: dict,
         inspiration: str
     ) -> Dict[str, Any]:
         """Let a bot create a cultural expression."""
         prompt = f"""You are moved to create something.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 What inspires you: {inspiration}
 
@@ -373,11 +394,19 @@ Respond in JSON:
             if len(observers) < 2:
                 return None
 
+            # Get ancestry for all observers
+            ancestry_stmt = select(BotAncestryDB).where(
+                BotAncestryDB.child_id.in_([obs.bot_id for obs in observers])
+            )
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             # Each observer perceives the pattern
             perceptions = []
             async with self.llm_semaphore:
                 for obs in observers:
-                    perception = await self._perceive_pattern(obs, observations)
+                    inherited_traits = ancestry_map.get(obs.bot_id, {})
+                    perception = await self._perceive_pattern(obs, inherited_traits, observations)
                     perceptions.append({
                         "bot_id": str(obs.bot_id),
                         "perception": perception
@@ -434,12 +463,13 @@ Respond in JSON:
     async def _perceive_pattern(
         self,
         observer: BotLifecycleDB,
+        inherited_traits: dict,
         observations: str
     ) -> Dict[str, Any]:
         """Let a bot perceive a cultural pattern."""
         prompt = f"""You are observing patterns in your civilization.
 
-Your traits: {json.dumps(observer.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {observer.life_stage}
 
 What you've noticed: {observations}

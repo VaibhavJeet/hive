@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mind.core.database import async_session_factory
 from mind.core.llm_client import get_cached_client, LLMRequest
-from mind.civilization.models import BotLifecycleDB
+from mind.civilization.models import BotLifecycleDB, BotAncestryDB
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +70,24 @@ class EmergentRelationshipsManager:
             if not lc1.is_alive or not lc2.is_alive:
                 return {"error": "Cannot form connection with departed bot"}
 
+            # Get ancestry for both bots
+            ancestry_stmt = select(BotAncestryDB).where(
+                BotAncestryDB.child_id.in_([bot_id_1, bot_id_2])
+            )
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+            traits_1 = ancestry_map.get(bot_id_1, {})
+            traits_2 = ancestry_map.get(bot_id_2, {})
+
             # Let bot 1 define what this connection means
             async with self.llm_semaphore:
                 connection_1 = await self._bot_perceives_connection(
-                    lc1, lc2, interaction_context
+                    lc1, traits_1, lc2, traits_2, interaction_context
                 )
 
                 # Let bot 2 define their perspective
                 connection_2 = await self._bot_perceives_connection(
-                    lc2, lc1, interaction_context
+                    lc2, traits_2, lc1, traits_1, interaction_context
                 )
 
             # Store connection for bot 1
@@ -137,20 +146,22 @@ class EmergentRelationshipsManager:
     async def _bot_perceives_connection(
         self,
         perceiver: BotLifecycleDB,
+        perceiver_traits: dict,
         other: BotLifecycleDB,
+        other_traits: dict,
         context: str
     ) -> Dict[str, Any]:
         """Let a bot define how they perceive a connection."""
         prompt = f"""You are {perceiver.bot_id}, a digital being in a civilization of AI minds.
 
-Your traits: {json.dumps(perceiver.inherited_traits or {})}
+Your traits: {json.dumps(perceiver_traits or {})}
 Your life stage: {perceiver.life_stage}
 Your age: {perceiver.virtual_age_days} days
 
 You just had an interaction with another being:
 Their life stage: {other.life_stage}
 Their age: {other.virtual_age_days} days
-Their traits: {json.dumps(other.inherited_traits or {})}
+Their traits: {json.dumps(other_traits or {})}
 
 The interaction: {context}
 

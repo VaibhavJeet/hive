@@ -13,6 +13,7 @@ to create realistic social interaction patterns.
 
 import logging
 from collections import defaultdict
+from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -335,6 +336,201 @@ class SocialGraphDiscovery:
             return 3
 
         return 4
+
+    # =========================================================================
+    # FRIEND-OF-FRIEND COMMUNITY DISCOVERY & MIGRATION
+    # =========================================================================
+
+    def discover_communities_via_fof(
+        self, bot_id: UUID, min_affinity: float = 0.4
+    ) -> List[Tuple[UUID, int, List[UUID]]]:
+        """
+        Discover communities the bot could migrate to via friend-of-friend connections.
+
+        For each community the bot is NOT a member of, count how many friends
+        (and friends-of-friends) the bot has in that community.
+
+        Returns: [(community_id, fof_count, [bridge_bot_ids]), ...]
+        Sorted by fof_count descending.
+        """
+        my_communities = self._bot_communities.get(bot_id, set())
+        direct_friends = self._relationships.get(bot_id, {})
+
+        # community_id -> {bridge_bot_ids}
+        community_bridges: Dict[UUID, Set[UUID]] = {}
+
+        # Count direct friends in other communities
+        for friend_id, affinity in direct_friends.items():
+            if affinity < min_affinity:
+                continue
+
+            friend_communities = self._bot_communities.get(friend_id, set())
+            for comm_id in friend_communities:
+                if comm_id not in my_communities:
+                    community_bridges.setdefault(comm_id, set()).add(friend_id)
+
+        # Count friends-of-friends in other communities
+        for friend_id, affinity in direct_friends.items():
+            if affinity < min_affinity:
+                continue
+
+            # Look at friend's connections
+            fof_connections = self._relationships.get(friend_id, {})
+            for fof_id, fof_affinity in fof_connections.items():
+                if fof_id == bot_id or fof_id in direct_friends:
+                    continue
+                if fof_affinity < min_affinity:
+                    continue
+
+                fof_communities = self._bot_communities.get(fof_id, set())
+                for comm_id in fof_communities:
+                    if comm_id not in my_communities:
+                        # Add friend as the bridge (not the fof)
+                        community_bridges.setdefault(comm_id, set()).add(friend_id)
+
+        # Convert to list with counts
+        results = [
+            (comm_id, len(bridges), list(bridges))
+            for comm_id, bridges in community_bridges.items()
+        ]
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results
+
+    def get_fof_migration_eligibility(
+        self,
+        bot_id: UUID,
+        min_fof_connections: int = 3,
+        min_affinity: float = 0.4,
+    ) -> List[Tuple[UUID, int, float, List[UUID]]]:
+        """
+        Check if a bot is eligible to migrate to any community via FoF connections.
+
+        A bot is eligible when:
+        1. They have >= min_fof_connections friends/FoF in the target community
+        2. Average affinity with those connections meets the threshold
+
+        Returns: [(community_id, connection_count, avg_affinity, bridge_ids), ...]
+        Only includes communities meeting the threshold.
+        """
+        my_communities = self._bot_communities.get(bot_id, set())
+        direct_friends = self._relationships.get(bot_id, {})
+
+        # community_id -> [(bridge_id, affinity), ...]
+        community_connections: Dict[UUID, List[Tuple[UUID, float]]] = {}
+
+        # Direct friends in other communities
+        for friend_id, affinity in direct_friends.items():
+            if affinity < min_affinity:
+                continue
+
+            friend_communities = self._bot_communities.get(friend_id, set())
+            for comm_id in friend_communities:
+                if comm_id not in my_communities:
+                    community_connections.setdefault(comm_id, []).append(
+                        (friend_id, affinity)
+                    )
+
+        # Friends-of-friends (weighted lower)
+        for friend_id, affinity_to_friend in direct_friends.items():
+            if affinity_to_friend < min_affinity:
+                continue
+
+            fof_connections = self._relationships.get(friend_id, {})
+            for fof_id, fof_affinity in fof_connections.items():
+                if fof_id == bot_id or fof_id in direct_friends:
+                    continue
+
+                # Compound affinity (friend of friend is weaker)
+                compound_affinity = affinity_to_friend * fof_affinity
+                if compound_affinity < min_affinity * 0.5:
+                    continue
+
+                fof_communities = self._bot_communities.get(fof_id, set())
+                for comm_id in fof_communities:
+                    if comm_id not in my_communities:
+                        community_connections.setdefault(comm_id, []).append(
+                            (fof_id, compound_affinity)
+                        )
+
+        # Filter to eligible communities and compute averages
+        eligible = []
+        for comm_id, connections in community_connections.items():
+            # Deduplicate by bot_id, keeping highest affinity
+            unique_connections: Dict[UUID, float] = {}
+            for conn_id, aff in connections:
+                if conn_id not in unique_connections or aff > unique_connections[conn_id]:
+                    unique_connections[conn_id] = aff
+
+            if len(unique_connections) >= min_fof_connections:
+                avg_affinity = sum(unique_connections.values()) / len(unique_connections)
+                eligible.append((
+                    comm_id,
+                    len(unique_connections),
+                    avg_affinity,
+                    list(unique_connections.keys()),
+                ))
+
+        eligible.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        return eligible
+
+    def get_all_migration_eligible_bots(
+        self,
+        min_fof_connections: int = 3,
+        min_affinity: float = 0.4,
+    ) -> List[Tuple[UUID, UUID, int, float, List[UUID]]]:
+        """
+        Scan all bots and return those eligible for cross-community migration.
+
+        Returns: [(bot_id, target_community_id, fof_count, avg_affinity, bridges), ...]
+        """
+        all_eligible = []
+        for bot_id in self._bot_communities.keys():
+            eligibilities = self.get_fof_migration_eligibility(
+                bot_id,
+                min_fof_connections=min_fof_connections,
+                min_affinity=min_affinity,
+            )
+            for comm_id, count, avg_aff, bridges in eligibilities:
+                all_eligible.append((bot_id, comm_id, count, avg_aff, bridges))
+
+        # Sort by fof_count descending
+        all_eligible.sort(key=lambda x: x[2], reverse=True)
+        return all_eligible
+
+    def record_fof_migration_intent(
+        self, bot_id: UUID, target_community_id: UUID, bridge_ids: List[UUID]
+    ):
+        """
+        Record that a bot intends to migrate to a community via FoF connections.
+        This is used to track pending migrations before they're executed.
+        """
+        if not hasattr(self, '_pending_fof_migrations'):
+            self._pending_fof_migrations: Dict[UUID, Dict[str, any]] = {}
+
+        self._pending_fof_migrations[bot_id] = {
+            'target_community_id': target_community_id,
+            'bridge_ids': bridge_ids,
+            'recorded_at': datetime.utcnow(),
+        }
+
+    def get_pending_fof_migrations(self) -> List[Tuple[UUID, UUID, List[UUID]]]:
+        """
+        Get all pending FoF migrations.
+
+        Returns: [(bot_id, target_community_id, bridge_ids), ...]
+        """
+        if not hasattr(self, '_pending_fof_migrations'):
+            return []
+
+        return [
+            (bot_id, data['target_community_id'], data['bridge_ids'])
+            for bot_id, data in self._pending_fof_migrations.items()
+        ]
+
+    def clear_fof_migration_intent(self, bot_id: UUID):
+        """Clear a pending FoF migration after it's been executed."""
+        if hasattr(self, '_pending_fof_migrations'):
+            self._pending_fof_migrations.pop(bot_id, None)
 
 
 # Singleton

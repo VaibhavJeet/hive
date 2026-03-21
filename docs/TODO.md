@@ -26,7 +26,7 @@
 - [x] Config system for all parameters
 - [x] All API endpoints added
 - [x] RetiredBotDB and ArchivedMemoryDB used
-- [ ] BotAncestryDB instead of JSON (low priority)
+- [x] BotAncestryDB instead of JSON (completed)
 
 ---
 

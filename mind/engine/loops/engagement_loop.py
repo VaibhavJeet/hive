@@ -43,6 +43,7 @@ from mind.engine.authenticity import (
     EngagementContext
 )
 from mind.engine.realistic_behaviors import get_realistic_behavior_manager
+from mind.engine.relationship_validator import get_relationship_validator
 from mind.config.settings import settings
 
 if TYPE_CHECKING:
@@ -515,13 +516,32 @@ Output ONLY your comment."""
                 logger.warning(f"LLM error for comment, skipping: {e}")
                 return
 
-            # Check for duplicate content with retry
-            if self._is_duplicate_content(bot.id, content, threshold=0.5):
+            # Validate for hallucinated relationships
+            relationship_validator = get_relationship_validator()
+            validation_result = await relationship_validator.validate_response(
+                bot_id=bot.id,
+                response_text=content,
+                session=session
+            )
+
+            # Check for duplicate content or hallucinated relationships - retry if needed
+            needs_retry = (
+                self._is_duplicate_content(bot.id, content, threshold=0.5) or
+                not validation_result.is_valid
+            )
+
+            if needs_retry:
+                retry_reason = "duplicate" if self._is_duplicate_content(bot.id, content, threshold=0.5) else "hallucinated relationships"
+                validation_hint = validation_result.get_regeneration_hint() if not validation_result.is_valid else ""
+
                 # Try once more with higher temperature
                 try:
                     async with self.llm_semaphore:
+                        retry_prompt = prompt + "\n\nBe MORE CREATIVE - your last response was too similar to recent ones."
+                        if validation_hint:
+                            retry_prompt += validation_hint
                         response = await llm.generate(LLMRequest(
-                            prompt=prompt + "\n\nBe MORE CREATIVE - your last response was too similar to recent ones.",
+                            prompt=retry_prompt,
                             max_tokens=50,
                             temperature=1.0
                         ))
@@ -535,11 +555,21 @@ Output ONLY your comment."""
                         )
                         content = smart.apply_conversation_style(processed["text"], bot)
 
+                    # Validate again
+                    validation_result = await relationship_validator.validate_response(
+                        bot_id=bot.id,
+                        response_text=content,
+                        session=session
+                    )
+
                     if self._is_duplicate_content(bot.id, content, threshold=0.5):
                         logger.debug(f"[DEDUP] {bot.display_name} retry still duplicate, skipping comment")
                         return
+                    if not validation_result.is_valid:
+                        logger.debug(f"[VALIDATOR] {bot.display_name} retry still has hallucinations, skipping comment")
+                        return
                 except Exception as e:
-                    logger.warning(f"Failed to generate unique comment for {bot.display_name}: {e}")
+                    logger.warning(f"Failed to generate valid comment for {bot.display_name}: {e}")
                     return
 
             # Track this content

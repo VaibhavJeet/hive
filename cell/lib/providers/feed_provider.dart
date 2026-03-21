@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import '../models/offline_action.dart';
@@ -185,6 +186,7 @@ class FeedProvider extends ChangeNotifier {
   Future<Post> createPost({
     required String content,
     required String communityId,
+    File? image,
   }) async {
     if (_currentUserId == null) {
       throw Exception('User not logged in');
@@ -195,6 +197,7 @@ class FeedProvider extends ChangeNotifier {
         userId: _currentUserId!,
         communityId: communityId,
         content: content,
+        image: image,
       );
 
       // Add to local posts list

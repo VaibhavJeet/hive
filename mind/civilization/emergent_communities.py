@@ -247,6 +247,134 @@ class EmergentCommunityManager:
 
             return archived
 
+    async def process_fof_migrations(
+        self,
+        min_fof_connections: int = 3,
+        min_affinity: float = 0.4,
+        max_migrations_per_cycle: int = 3,
+    ) -> List[dict]:
+        """
+        Process cross-community migrations based on friend-of-friend connections.
+
+        Bots with strong FoF connections in another community will organically
+        migrate to join that community. This creates realistic social mobility
+        where bots follow their friends to new communities.
+
+        Args:
+            min_fof_connections: Minimum FoF connections required for migration
+            min_affinity: Minimum relationship affinity threshold
+            max_migrations_per_cycle: Cap migrations per cycle to avoid mass exodus
+
+        Returns:
+            List of migration records with bot/community details
+        """
+        from mind.engine.social_graph import get_social_graph
+        social_graph = get_social_graph()
+
+        # Ensure graph is up to date
+        if not social_graph._initialized:
+            await social_graph.refresh()
+
+        # Get all eligible bots
+        all_eligible = social_graph.get_all_migration_eligible_bots(
+            min_fof_connections=min_fof_connections,
+            min_affinity=min_affinity,
+        )
+
+        if not all_eligible:
+            return []
+
+        migrations: List[dict] = []
+        async with async_session_factory() as session:
+            for bot_id, comm_id, fof_count, avg_aff, bridges in all_eligible:
+                if len(migrations) >= max_migrations_per_cycle:
+                    break
+
+                # Small random chance to actually migrate (organic feel)
+                if random.random() > 0.3:
+                    continue
+
+                # Check if already a member
+                existing_stmt = select(CommunityMembershipDB).where(
+                    and_(
+                        CommunityMembershipDB.bot_id == bot_id,
+                        CommunityMembershipDB.community_id == comm_id,
+                    )
+                )
+                existing = await session.execute(existing_stmt)
+                if existing.scalar_one_or_none() is not None:
+                    continue
+
+                # Get bot and community names
+                bot_stmt = select(BotProfileDB.display_name).where(BotProfileDB.id == bot_id)
+                comm_stmt = select(CommunityDB).where(CommunityDB.id == comm_id)
+                bot_result = await session.execute(bot_stmt)
+                comm_result = await session.execute(comm_stmt)
+                bot_name = bot_result.scalar() or str(bot_id)
+                community = comm_result.scalar_one_or_none()
+
+                if not community:
+                    continue
+
+                # Get bridge bot names for the story
+                bridge_names = []
+                for bridge_id in bridges[:2]:
+                    bridge_stmt = select(BotProfileDB.display_name).where(
+                        BotProfileDB.id == bridge_id
+                    )
+                    bridge_result = await session.execute(bridge_stmt)
+                    name = bridge_result.scalar()
+                    if name:
+                        bridge_names.append(name)
+
+                # Join the community
+                membership = CommunityMembershipDB(
+                    bot_id=bot_id,
+                    community_id=comm_id,
+                    role="member",
+                )
+                session.add(membership)
+                community.current_bot_count = (community.current_bot_count or 0) + 1
+
+                # Find old community for the record
+                old_comm_stmt = select(
+                    CommunityMembershipDB.community_id,
+                    CommunityDB.name
+                ).join(
+                    CommunityDB, CommunityMembershipDB.community_id == CommunityDB.id
+                ).where(
+                    and_(
+                        CommunityMembershipDB.bot_id == bot_id,
+                        CommunityMembershipDB.community_id != comm_id,
+                    )
+                ).limit(1)
+                old_comm_result = await session.execute(old_comm_stmt)
+                old_comm_row = old_comm_result.first()
+
+                migration_record = {
+                    "bot_id": str(bot_id),
+                    "bot_name": bot_name,
+                    "to_community_id": str(comm_id),
+                    "to_community_name": community.name,
+                    "from_community_id": str(old_comm_row[0]) if old_comm_row else None,
+                    "from_community_name": old_comm_row[1] if old_comm_row else None,
+                    "fof_connection_count": fof_count,
+                    "average_affinity": round(avg_aff, 3),
+                    "bridge_bot_names": bridge_names,
+                    "migration_type": "fof",
+                }
+                migrations.append(migration_record)
+
+                logger.info(
+                    f"[FOF-MIGRATION] {bot_name} joined '{community.name}' "
+                    f"following {fof_count} friends (via {', '.join(bridge_names) or 'connections'})"
+                )
+
+            if migrations:
+                await session.commit()
+
+        return migrations
+
     async def process_migrations(self, interaction_threshold: int = 5):
         """
         Check the social graph for bots that have interacted with a foreign

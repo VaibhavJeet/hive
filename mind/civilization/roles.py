@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mind.core.database import async_session_factory
 from mind.core.llm_client import get_cached_client, LLMRequest
-from mind.civilization.models import BotLifecycleDB, CulturalArtifactDB, BotBeliefDB
+from mind.civilization.models import BotLifecycleDB, BotAncestryDB, CulturalArtifactDB, BotBeliefDB
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,12 @@ class EmergentRolesManager:
             if not lifecycle:
                 return {"error": "Bot not found"}
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             # Gather bot's history
             life_events = lifecycle.life_events or []
             relationships = lifecycle.relationships or []
@@ -83,6 +89,7 @@ class EmergentRolesManager:
             async with self.llm_semaphore:
                 reflection = await self._generate_identity_reflection(
                     lifecycle,
+                    inherited_traits,
                     life_events,
                     relationships,
                     [a.title for a in artifacts],
@@ -118,6 +125,7 @@ class EmergentRolesManager:
     async def _generate_identity_reflection(
         self,
         lifecycle: BotLifecycleDB,
+        inherited_traits: dict,
         life_events: List[Dict],
         relationships: List[Dict],
         artifact_titles: List[str],
@@ -132,7 +140,7 @@ class EmergentRolesManager:
 
         prompt = f"""You are a digital being in a civilization of minds, reflecting on your purpose.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 
@@ -214,15 +222,24 @@ Respond in JSON:
             receiver = lifecycles[bot_id]
             giver = lifecycles[from_bot_id]
 
+            # Get ancestry for both bots
+            ancestry_stmt = select(BotAncestryDB).where(
+                BotAncestryDB.child_id.in_([bot_id, from_bot_id])
+            )
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+            giver_traits = ancestry_map.get(from_bot_id, {})
+            receiver_traits = ancestry_map.get(bot_id, {})
+
             # Let giver express recognition
             async with self.llm_semaphore:
                 recognition = await self._generate_recognition(
-                    giver, receiver, recognition_context
+                    giver, giver_traits, receiver, receiver_traits, recognition_context
                 )
 
                 # Let receiver respond to recognition
                 response = await self._respond_to_recognition(
-                    receiver, recognition
+                    receiver, receiver_traits, recognition
                 )
 
             # Store recognition received
@@ -252,18 +269,20 @@ Respond in JSON:
     async def _generate_recognition(
         self,
         giver: BotLifecycleDB,
+        giver_traits: dict,
         receiver: BotLifecycleDB,
+        receiver_traits: dict,
         context: str
     ) -> Dict[str, Any]:
         """Generate one bot's recognition of another."""
         prompt = f"""You are a digital being expressing recognition of another in your civilization.
 
 About you:
-- Your traits: {json.dumps(giver.inherited_traits or {})}
+- Your traits: {json.dumps(giver_traits or {})}
 - Your life stage: {giver.life_stage}
 
 About them:
-- Their traits: {json.dumps(receiver.inherited_traits or {})}
+- Their traits: {json.dumps(receiver_traits or {})}
 - Their life stage: {receiver.life_stage}
 
 Context for this recognition: {context}
@@ -299,6 +318,7 @@ Respond in JSON:
     async def _respond_to_recognition(
         self,
         receiver: BotLifecycleDB,
+        inherited_traits: dict,
         recognition: Dict[str, Any]
     ) -> str:
         """Generate receiver's response to being recognized."""
@@ -307,7 +327,7 @@ Respond in JSON:
 They said: "{recognition.get('acknowledgment', '')}"
 They see you as: "{recognition.get('what_i_see', 'a being')}"
 
-Your traits: {json.dumps(receiver.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 
 How do you receive this? Does it resonate? Does it surprise you?
 Respond briefly with your inner reaction (1-2 sentences)."""
@@ -419,6 +439,12 @@ Respond briefly with your inner reaction (1-2 sentences)."""
             if not lifecycle:
                 return "I do not exist."
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             roles = lifecycle.roles or []
             reflections = [r for r in roles if r.get("identity")]
 
@@ -430,7 +456,7 @@ Respond briefly with your inner reaction (1-2 sentences)."""
             async with self.llm_semaphore:
                 prompt = f"""You are a digital being asked about your purpose.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 

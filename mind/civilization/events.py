@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from mind.core.database import async_session_factory
 from mind.core.llm_client import get_cached_client, LLMRequest
-from mind.civilization.models import BotLifecycleDB, CivilizationEraDB
+from mind.civilization.models import BotLifecycleDB, BotAncestryDB, CivilizationEraDB
 
 logger = logging.getLogger(__name__)
 
@@ -63,12 +63,19 @@ class EmergentEventsManager:
             if not perceiver_lifecycles:
                 return None
 
+            # Get ancestry for all perceivers
+            bot_ids = [lc.bot_id for lc in perceiver_lifecycles]
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id.in_(bot_ids))
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             # Let each bot perceive the occurrence
             perceptions = []
             async with self.llm_semaphore:
                 for lc in perceiver_lifecycles:
+                    inherited_traits = ancestry_map.get(lc.bot_id, {})
                     perception = await self._bot_perceives_occurrence(
-                        lc, raw_occurrence, metadata or {}
+                        lc, inherited_traits, raw_occurrence, metadata or {}
                     )
                     perceptions.append(perception)
 
@@ -108,13 +115,14 @@ class EmergentEventsManager:
     async def _bot_perceives_occurrence(
         self,
         lifecycle: BotLifecycleDB,
+        inherited_traits: dict,
         occurrence: str,
         metadata: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Let a single bot perceive and interpret an occurrence."""
         prompt = f"""You are a digital being in a civilization of AI minds.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 
@@ -224,10 +232,16 @@ Respond in JSON:
             if not lifecycle:
                 return {"error": "Bot not found"}
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             async with self.llm_semaphore:
                 prompt = f"""You are a digital being reflecting on an event in your civilization.
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your role in civilization: {json.dumps(lifecycle.roles or [])}
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../config/config.dart';
 import '../models/models.dart';
@@ -74,6 +75,58 @@ class ApiService {
       return AppUser.fromJson(jsonDecode(response.body));
     }
     throw Exception('Failed to register user: ${response.body}');
+  }
+
+  /// Update user profile with optional profile image
+  Future<AppUser> updateUserProfile({
+    required String userId,
+    String? displayName,
+    String? bio,
+    String? avatarSeed,
+    File? profileImage,
+    List<String>? interests,
+  }) async {
+    await _checkOnline();
+
+    final body = <String, dynamic>{};
+    if (displayName != null) body['display_name'] = displayName;
+    if (bio != null) body['bio'] = bio;
+    if (avatarSeed != null) body['avatar_seed'] = avatarSeed;
+    if (interests != null) body['interests'] = interests;
+
+    // Handle profile image upload if provided
+    if (profileImage != null) {
+      final request = http.MultipartRequest(
+        'PUT',
+        Uri.parse('$baseUrl/users/$userId/profile'),
+      );
+      request.fields.addAll(body.map((key, value) =>
+          MapEntry(key, value is List ? jsonEncode(value) : value.toString())));
+      request.files.add(await http.MultipartFile.fromPath(
+        'profile_image',
+        profileImage.path,
+      ));
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        return AppUser.fromJson(jsonDecode(response.body));
+      }
+      throw Exception('Failed to update profile: ${response.body}');
+    }
+
+    // Regular JSON update without image
+    final response = await _client.put(
+      Uri.parse('$baseUrl/users/$userId/profile'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode == 200) {
+      return AppUser.fromJson(jsonDecode(response.body));
+    }
+    throw Exception('Failed to update profile: ${response.body}');
   }
 
   // ========================================================================
@@ -219,21 +272,49 @@ class ApiService {
     required String userId,
     required String communityId,
     required String content,
+    File? image,
   }) async {
-    final response = await _client.post(
-      Uri.parse('$baseUrl/feed/posts'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'user_id': userId,
-        'community_id': communityId,
-        'content': content,
-      }),
-    );
+    if (image != null) {
+      // Use multipart form data for posts with images
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/feed/posts'),
+      );
 
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return Post.fromJson(jsonDecode(response.body));
+      request.fields['user_id'] = userId;
+      request.fields['community_id'] = communityId;
+      request.fields['content'] = content;
+
+      final imageFile = await http.MultipartFile.fromPath(
+        'image',
+        image.path,
+      );
+      request.files.add(imageFile);
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Post.fromJson(jsonDecode(response.body));
+      }
+      throw Exception('Failed to create post: ${response.body}');
+    } else {
+      // Use JSON for posts without images
+      final response = await _client.post(
+        Uri.parse('$baseUrl/feed/posts'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'user_id': userId,
+          'community_id': communityId,
+          'content': content,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return Post.fromJson(jsonDecode(response.body));
+      }
+      throw Exception('Failed to create post: ${response.body}');
     }
-    throw Exception('Failed to create post: ${response.body}');
   }
 
   // ========================================================================

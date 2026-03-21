@@ -470,12 +470,18 @@ class AppUser {
   final String deviceId;
   final String displayName;
   final String avatarSeed;
+  final String? bio;
+  final String? profileImageUrl;
+  final List<String> interests;
 
   AppUser({
     required this.id,
     required this.deviceId,
     required this.displayName,
     required this.avatarSeed,
+    this.bio,
+    this.profileImageUrl,
+    this.interests = const [],
   });
 
   factory AppUser.fromJson(Map<String, dynamic> json) {
@@ -484,6 +490,40 @@ class AppUser {
       deviceId: json['device_id'] ?? '',
       displayName: json['display_name'] ?? 'User',
       avatarSeed: json['avatar_seed'] ?? '',
+      bio: json['bio'],
+      profileImageUrl: json['profile_image_url'],
+      interests: List<String>.from(json['interests'] ?? []),
     );
   }
+
+  /// Create a copy with updated fields
+  AppUser copyWith({
+    String? id,
+    String? deviceId,
+    String? displayName,
+    String? avatarSeed,
+    String? bio,
+    String? profileImageUrl,
+    List<String>? interests,
+  }) {
+    return AppUser(
+      id: id ?? this.id,
+      deviceId: deviceId ?? this.deviceId,
+      displayName: displayName ?? this.displayName,
+      avatarSeed: avatarSeed ?? this.avatarSeed,
+      bio: bio ?? this.bio,
+      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
+      interests: interests ?? this.interests,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'device_id': deviceId,
+    'display_name': displayName,
+    'avatar_seed': avatarSeed,
+    'bio': bio,
+    'profile_image_url': profileImageUrl,
+    'interests': interests,
+  };
 }

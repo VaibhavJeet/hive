@@ -521,3 +521,55 @@ async def initialize_genetics() -> GeneticInheritance:
     genetics = get_genetic_inheritance()
     await genetics._load_config()
     return genetics
+
+
+async def get_ancestry_traits(bot_id: UUID, session=None) -> dict:
+    """
+    Get inherited traits for a bot from the BotAncestryDB table.
+
+    This is the canonical source for ancestry/inheritance data.
+    Returns the inherited_traits dict, or empty dict if not found.
+
+    Args:
+        bot_id: The bot to get ancestry traits for
+        session: Optional database session (will create one if not provided)
+
+    Returns:
+        Dict of inherited traits, or empty dict if no ancestry record
+    """
+    async def _fetch(sess):
+        stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+        result = await sess.execute(stmt)
+        ancestry = result.scalar_one_or_none()
+        if ancestry:
+            return ancestry.inherited_traits or {}
+        return {}
+
+    if session:
+        return await _fetch(session)
+    else:
+        async with async_session_factory() as sess:
+            return await _fetch(sess)
+
+
+async def get_ancestry_record(bot_id: UUID, session=None) -> Optional[BotAncestryDB]:
+    """
+    Get the full ancestry record for a bot.
+
+    Args:
+        bot_id: The bot to get ancestry for
+        session: Optional database session
+
+    Returns:
+        BotAncestryDB record or None if not found
+    """
+    async def _fetch(sess):
+        stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+        result = await sess.execute(stmt)
+        return result.scalar_one_or_none()
+
+    if session:
+        return await _fetch(session)
+    else:
+        async with async_session_factory() as sess:
+            return await _fetch(sess)

@@ -1,9 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:math';
 import '../theme/app_theme.dart';
 import '../providers/app_state.dart';
+import '../services/api_service.dart';
 import '../widgets/avatar_widget.dart';
 
 /// Profile editing screen with display name, bio, avatar selection, and interest tags
@@ -28,6 +31,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _isSaving = false;
   bool _hasChanges = false;
   String? _errorMessage;
+
+  // Profile image
+  File? _profileImage;
+  String? _existingProfileImageUrl;
+  final ImagePicker _imagePicker = ImagePicker();
+  final ApiService _apiService = ApiService();
 
   // Selected interests
   final Set<String> _selectedInterests = {};
@@ -98,26 +107,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     try {
       final appState = context.read<AppState>();
       final prefs = await SharedPreferences.getInstance();
+      final user = appState.currentUser;
 
       setState(() {
         // Load display name from user or preferences
         _displayNameController.text =
-            appState.currentUser?.displayName ??
+            user?.displayName ??
             prefs.getString('display_name') ??
             'User';
 
         // Load avatar seed
         _avatarSeed =
-            appState.currentUser?.avatarSeed ??
+            user?.avatarSeed ??
             prefs.getString('avatar_seed') ??
             'default_seed';
 
-        // Load bio
-        _bioController.text = prefs.getString('user_bio') ?? '';
+        // Load bio from user model or preferences
+        _bioController.text = user?.bio ?? prefs.getString('user_bio') ?? '';
 
-        // Load saved interests
-        final savedInterests = prefs.getStringList('user_interests') ?? [];
-        _selectedInterests.addAll(savedInterests);
+        // Load existing profile image URL
+        _existingProfileImageUrl = user?.profileImageUrl;
+
+        // Load saved interests from user model or preferences
+        if (user != null && user.interests.isNotEmpty) {
+          _selectedInterests.addAll(user.interests);
+        } else {
+          final savedInterests = prefs.getStringList('user_interests') ?? [];
+          _selectedInterests.addAll(savedInterests);
+        }
 
         _isLoading = false;
       });
@@ -155,6 +172,176 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _avatarSeed = 'random_${DateTime.now().millisecondsSinceEpoch}_${random.nextInt(999999)}';
       _hasChanges = true;
     });
+  }
+
+  /// Pick image from gallery
+  Future<void> _pickImageFromGallery() async {
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (pickedFile != null) {
+        setState(() {
+          _profileImage = File(pickedFile.path);
+          _hasChanges = true;
+        });
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick image: $e');
+    }
+  }
+
+  /// Take photo with camera
+  Future<void> _pickImageFromCamera() async {
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+
+      if (pickedFile != null) {
+        setState(() {
+          _profileImage = File(pickedFile.path);
+          _hasChanges = true;
+        });
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to capture image: $e');
+    }
+  }
+
+  /// Remove profile image
+  void _removeProfileImage() {
+    setState(() {
+      _profileImage = null;
+      _existingProfileImageUrl = null;
+      _hasChanges = true;
+    });
+  }
+
+  /// Show image source selection dialog
+  void _showImageSourceDialog() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.textMuted.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Profile Photo',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.photo_library_outlined,
+                    color: AppTheme.primaryColor,
+                  ),
+                ),
+                title: const Text(
+                  'Choose from Gallery',
+                  style: TextStyle(color: AppTheme.textPrimary),
+                ),
+                subtitle: const Text(
+                  'Select an existing photo',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImageFromGallery();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondaryColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt_outlined,
+                    color: AppTheme.secondaryColor,
+                  ),
+                ),
+                title: const Text(
+                  'Take Photo',
+                  style: TextStyle(color: AppTheme.textPrimary),
+                ),
+                subtitle: const Text(
+                  'Capture a new photo',
+                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImageFromCamera();
+                },
+              ),
+              if (_profileImage != null || _existingProfileImageUrl != null)
+                ListTile(
+                  leading: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.delete_outline,
+                      color: AppTheme.errorColor,
+                    ),
+                  ),
+                  title: const Text(
+                    'Remove Photo',
+                    style: TextStyle(color: AppTheme.errorColor),
+                  ),
+                  subtitle: const Text(
+                    'Use generated avatar instead',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _removeProfileImage();
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Show avatar picker options bottom sheet
@@ -280,27 +467,67 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   /// Validate the form
   bool _validateForm() {
-    if (_displayNameController.text.trim().isEmpty) {
+    final displayName = _displayNameController.text.trim();
+    final bio = _bioController.text;
+
+    // Display name validation
+    if (displayName.isEmpty) {
       _showErrorSnackBar('Please enter a display name');
       return false;
     }
 
-    if (_displayNameController.text.trim().length < 2) {
+    if (displayName.length < 2) {
       _showErrorSnackBar('Display name must be at least 2 characters');
       return false;
     }
 
-    if (_displayNameController.text.trim().length > 50) {
+    if (displayName.length > 50) {
       _showErrorSnackBar('Display name must be less than 50 characters');
       return false;
     }
 
-    if (_bioController.text.length > 500) {
+    // Check for valid characters (letters, numbers, spaces, and common punctuation)
+    final validNameRegex = RegExp(r'^[\p{L}\p{N}\s\-_.]+$', unicode: true);
+    if (!validNameRegex.hasMatch(displayName)) {
+      _showErrorSnackBar('Display name contains invalid characters');
+      return false;
+    }
+
+    // Check for offensive content (basic filter)
+    if (_containsOffensiveContent(displayName)) {
+      _showErrorSnackBar('Display name contains inappropriate content');
+      return false;
+    }
+
+    // Bio validation
+    if (bio.length > 500) {
       _showErrorSnackBar('Bio must be less than 500 characters');
       return false;
     }
 
+    // Validate interests count (optional but helpful)
+    if (_selectedInterests.length > 10) {
+      _showErrorSnackBar('Please select no more than 10 interests');
+      return false;
+    }
+
     return true;
+  }
+
+  /// Basic check for offensive content
+  bool _containsOffensiveContent(String text) {
+    // This is a very basic filter - in production, use a proper content moderation API
+    final offensivePatterns = [
+      // Add patterns as needed - keeping this minimal for now
+    ];
+
+    final lowerText = text.toLowerCase();
+    for (final pattern in offensivePatterns) {
+      if (lowerText.contains(pattern)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Save profile data
@@ -313,21 +540,32 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     });
 
     try {
+      final appState = context.read<AppState>();
       final prefs = await SharedPreferences.getInstance();
+      final userId = appState.currentUser?.id;
 
-      // Save to SharedPreferences
+      // Save to SharedPreferences (local backup)
       await prefs.setString('display_name', _displayNameController.text.trim());
       await prefs.setString('user_bio', _bioController.text.trim());
       await prefs.setString('avatar_seed', _avatarSeed);
       await prefs.setStringList('user_interests', _selectedInterests.toList());
 
-      // TODO: Save to API when endpoint is available
-      // await ApiService().updateUserProfile(
-      //   displayName: _displayNameController.text.trim(),
-      //   bio: _bioController.text.trim(),
-      //   avatarSeed: _avatarSeed,
-      //   interests: _selectedInterests.toList(),
-      // );
+      // Save to API if user is logged in
+      if (userId != null && userId.isNotEmpty) {
+        try {
+          await _apiService.updateUserProfile(
+            userId: userId,
+            displayName: _displayNameController.text.trim(),
+            bio: _bioController.text.trim(),
+            avatarSeed: _avatarSeed,
+            profileImage: _profileImage,
+            interests: _selectedInterests.toList(),
+          );
+        } catch (apiError) {
+          // Log API error but don't fail - data is saved locally
+          debugPrint('API update failed (saved locally): $apiError');
+        }
+      }
 
       if (mounted) {
         _showSuccessSnackBar('Profile saved successfully');
@@ -582,21 +820,69 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
+  /// Build the profile image widget (either picked image, existing URL, or avatar)
+  Widget _buildProfileImageWidget({required double size}) {
+    if (_profileImage != null) {
+      // Show locally picked image
+      return ClipOval(
+        child: Image.file(
+          _profileImage!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+      );
+    } else if (_existingProfileImageUrl != null && _existingProfileImageUrl!.isNotEmpty) {
+      // Show existing profile image from server
+      return ClipOval(
+        child: Image.network(
+          _existingProfileImageUrl!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            return AvatarWidget(seed: _avatarSeed, size: size);
+          },
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppTheme.surfaceColor,
+              ),
+              child: const Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            );
+          },
+        ),
+      );
+    } else {
+      // Show generated avatar
+      return AvatarWidget(seed: _avatarSeed, size: size);
+    }
+  }
+
   /// Build avatar section
   Widget _buildAvatarSection() {
+    final hasCustomImage = _profileImage != null ||
+        (_existingProfileImageUrl != null && _existingProfileImageUrl!.isNotEmpty);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader('Avatar', subtitle: 'Choose how you appear to others'),
+        _buildSectionHeader('Profile Photo', subtitle: 'Choose how you appear to others'),
         const SizedBox(height: 16),
 
-        // Current avatar display
+        // Current avatar/photo display
         Center(
           child: Stack(
             children: [
-              // Avatar
+              // Avatar or Photo
               GestureDetector(
-                onTap: _showAvatarPickerOptions,
+                onTap: _showImageSourceDialog,
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
@@ -605,10 +891,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       width: 3,
                     ),
                   ),
-                  child: AvatarWidget(
-                    seed: _avatarSeed,
-                    size: 120,
-                  ),
+                  child: _buildProfileImageWidget(size: 120),
                 ),
               ),
 
@@ -617,7 +900,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 right: 0,
                 bottom: 0,
                 child: GestureDetector(
-                  onTap: _showAvatarPickerOptions,
+                  onTap: _showImageSourceDialog,
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
@@ -629,7 +912,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                     ),
                     child: const Icon(
-                      Icons.edit,
+                      Icons.camera_alt,
                       color: Colors.white,
                       size: 20,
                     ),
@@ -643,13 +926,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
         // Quick action buttons
         Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
             children: [
               OutlinedButton.icon(
-                onPressed: _showAvatarPickerOptions,
-                icon: const Icon(Icons.palette_outlined, size: 18),
-                label: const Text('Choose'),
+                onPressed: _showImageSourceDialog,
+                icon: const Icon(Icons.photo_camera_outlined, size: 18),
+                label: Text(hasCustomImage ? 'Change Photo' : 'Add Photo'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.primaryColor,
                   side: const BorderSide(color: AppTheme.primaryColor),
@@ -659,69 +944,87 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
               ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: _generateRandomAvatar,
-                icon: const Icon(Icons.shuffle, size: 18),
-                label: const Text('Random'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.secondaryColor,
-                  side: const BorderSide(color: AppTheme.secondaryColor),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              if (!hasCustomImage) ...[
+                OutlinedButton.icon(
+                  onPressed: _showAvatarPickerOptions,
+                  icon: const Icon(Icons.palette_outlined, size: 18),
+                  label: const Text('Avatar'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.secondaryColor,
+                    side: const BorderSide(color: AppTheme.secondaryColor),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 ),
-              ),
+                OutlinedButton.icon(
+                  onPressed: _generateRandomAvatar,
+                  icon: const Icon(Icons.shuffle, size: 18),
+                  label: const Text('Random'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary,
+                    side: BorderSide(color: AppTheme.textMuted.withValues(alpha: 0.5)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        const SizedBox(height: 20),
 
-        // Preset avatars carousel
-        const Text(
-          'Quick presets:',
-          style: TextStyle(
-            fontSize: 14,
-            color: AppTheme.textSecondary,
+        // Show avatar presets only if no custom image
+        if (!hasCustomImage) ...[
+          const SizedBox(height: 20),
+
+          // Preset avatars carousel
+          const Text(
+            'Quick presets:',
+            style: TextStyle(
+              fontSize: 14,
+              color: AppTheme.textSecondary,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 72,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _presetAvatars.length,
-            separatorBuilder: (context, index) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final seed = _presetAvatars[index];
-              final isSelected = seed == _avatarSeed;
-              return GestureDetector(
-                onTap: () => _selectPresetAvatar(seed),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: isSelected
-                        ? Border.all(
-                            color: AppTheme.primaryColor,
-                            width: 3,
-                          )
-                        : Border.all(
-                            color: AppTheme.textMuted.withValues(alpha: 0.2),
-                            width: 2,
-                          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 72,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _presetAvatars.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 12),
+              itemBuilder: (context, index) {
+                final seed = _presetAvatars[index];
+                final isSelected = seed == _avatarSeed;
+                return GestureDetector(
+                  onTap: () => _selectPresetAvatar(seed),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: isSelected
+                          ? Border.all(
+                              color: AppTheme.primaryColor,
+                              width: 3,
+                            )
+                          : Border.all(
+                              color: AppTheme.textMuted.withValues(alpha: 0.2),
+                              width: 2,
+                            ),
+                    ),
+                    child: AvatarWidget(
+                      seed: seed,
+                      size: 58,
+                    ),
                   ),
-                  child: AvatarWidget(
-                    seed: seed,
-                    size: 58,
-                  ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

@@ -29,6 +29,7 @@ from mind.hashtags.hashtag_service import get_hashtag_service
 from mind.engine.authenticity import get_authenticity_engine
 from mind.engine.realistic_behaviors import get_realistic_behavior_manager
 from mind.config.settings import settings
+from mind.engine.relationship_validator import get_relationship_validator
 from mind.capabilities.web_search import DuckDuckGoSearch, SearchResponse
 from mind.capabilities.image_gen import (
     ImageGenerator,
@@ -399,13 +400,23 @@ class PostGenerationLoop(BaseLoop):
             # Get recent content to avoid repetition
             recent_content_context = self._get_recent_content_for_prompt(bot.id, limit=5)
 
-            # Generate post content with LLM - retry up to 3 times on duplicates
+            # Initialize relationship validator
+            relationship_validator = get_relationship_validator()
+
+            # Generate post content with LLM - retry up to 3 times on duplicates or hallucinations
             content = None
             max_attempts = 3
+            validation_hint = ""
 
             for attempt in range(max_attempts):
                 try:
                     variation_prompt = self._get_variation_prompt(attempt)
+
+                    # Add validation hint if regenerating due to hallucinated relationships
+                    relationship_warning = ""
+                    if validation_hint:
+                        relationship_warning = f"\n{validation_hint}\n"
+
                     async with self.llm_semaphore:
                         prompt = f"""{self_context}
 
@@ -423,7 +434,7 @@ class PostGenerationLoop(BaseLoop):
 {research_context}
 
 {recent_content_context}
-
+{relationship_warning}
 ## YOUR TASK
 Write a SHORT post (1-2 sentences). This should come from YOUR evolved mind:
 - Apply what youve learned about what resonates
@@ -479,11 +490,28 @@ Output ONLY the post."""
                             logger.debug(f"Module execution error: {e}")
 
                     # Check for duplicate content
-                    if not self._is_duplicate_content(bot.id, content, threshold=0.5):
-                        break  # Success - unique content generated
-                    else:
+                    if self._is_duplicate_content(bot.id, content, threshold=0.5):
                         logger.debug(f"[DEDUP] {bot.display_name} attempt {attempt + 1} was duplicate, retrying...")
-                        content = None  # Reset for next attempt
+                        content = None
+                        continue
+
+                    # Validate for hallucinated relationships
+                    validation_result = await relationship_validator.validate_response(
+                        bot_id=bot.id,
+                        response_text=content
+                    )
+
+                    if not validation_result.is_valid:
+                        logger.warning(
+                            f"[VALIDATOR] {bot.display_name} post attempt {attempt + 1}: "
+                            f"hallucinated relationships with {validation_result.hallucinated_names}"
+                        )
+                        validation_hint = validation_result.get_regeneration_hint()
+                        content = None
+                        continue
+
+                    # Content passed all checks
+                    break
 
                 except Exception as e:
                     logger.warning(f"LLM error for post attempt {attempt + 1}: {e}")
@@ -491,7 +519,7 @@ Output ONLY the post."""
 
             # If all attempts failed, skip this post
             if content is None:
-                logger.debug(f"[DEDUP] {bot.display_name} all {max_attempts} attempts produced duplicates, skipping")
+                logger.debug(f"[DEDUP/VALIDATOR] {bot.display_name} all {max_attempts} attempts failed, skipping")
                 return
 
             # Track this content for future deduplication

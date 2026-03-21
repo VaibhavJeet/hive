@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../providers/app_state.dart';
@@ -25,6 +27,8 @@ class _CreatePostScreenState extends State<CreatePostScreen>
   bool _isPosting = false;
   bool _showSuccess = false;
   bool _isPreviewMode = false;
+  File? _selectedImage;
+  final ImagePicker _imagePicker = ImagePicker();
 
   late AnimationController _successController;
   late Animation<double> _successAnimation;
@@ -114,6 +118,133 @@ class _CreatePostScreenState extends State<CreatePostScreen>
         currentText.replaceAll(' #$tag', '').replaceAll('#$tag', '');
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: source,
+        maxWidth: 1920,
+        maxHeight: 1080,
+        imageQuality: 85,
+      );
+      if (pickedFile != null) {
+        setState(() {
+          _selectedImage = File(pickedFile.path);
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to pick image: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  void _removeImage() {
+    setState(() {
+      _selectedImage = null;
+    });
+  }
+
+  void _showImageSourcePicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: AppTheme.cyberDark,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(
+              color: AppTheme.neonCyan.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.textMuted,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Select Image Source',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+              ),
+              ListTile(
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera);
+                },
+                leading: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: AppTheme.primaryGradient,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.camera_alt,
+                    color: Colors.white,
+                  ),
+                ),
+                title: const Text(
+                  'Camera',
+                  style: TextStyle(color: AppTheme.textPrimary),
+                ),
+                subtitle: const Text(
+                  'Take a new photo',
+                  style: TextStyle(color: AppTheme.textMuted),
+                ),
+              ),
+              ListTile(
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery);
+                },
+                leading: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppTheme.cyberSurface,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.photo_library,
+                    color: AppTheme.neonMagenta,
+                  ),
+                ),
+                title: const Text(
+                  'Gallery',
+                  style: TextStyle(color: AppTheme.textPrimary),
+                ),
+                subtitle: const Text(
+                  'Choose from your photos',
+                  style: TextStyle(color: AppTheme.textMuted),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _handlePost() async {
     if (!_canPost || _isPosting) return;
 
@@ -124,6 +255,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
       await appState.createPost(
         content: _contentController.text.trim(),
         communityId: _selectedCommunity!.id,
+        image: _selectedImage,
       );
 
       setState(() => _showSuccess = true);
@@ -741,12 +873,20 @@ class _CreatePostScreenState extends State<CreatePostScreen>
           ),
         ),
         const SizedBox(height: 12),
+
+        // Selected image preview
+        if (_selectedImage != null) _buildImagePreview(),
+
+        if (_selectedImage != null) const SizedBox(height: 16),
+
         Row(
           children: [
             _buildMediaButton(
               icon: Icons.image_outlined,
               label: 'Photo',
               color: AppTheme.neonCyan,
+              onTap: _showImageSourcePicker,
+              isActive: _selectedImage != null,
             ),
             const SizedBox(width: 12),
             _buildMediaButton(
@@ -772,14 +912,97 @@ class _CreatePostScreenState extends State<CreatePostScreen>
     );
   }
 
+  Widget _buildImagePreview() {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppTheme.neonCyan.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Stack(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: Image.file(
+              _selectedImage!,
+              width: double.infinity,
+              height: 200,
+              fit: BoxFit.cover,
+            ),
+          ),
+          // Remove button
+          Positioned(
+            top: 8,
+            right: 8,
+            child: GestureDetector(
+              onTap: _removeImage,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppTheme.cyberBlack.withValues(alpha: 0.8),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppTheme.neonCyan.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.close,
+                  size: 18,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ),
+          ),
+          // Image indicator
+          Positioned(
+            bottom: 8,
+            left: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.cyberBlack.withValues(alpha: 0.8),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppTheme.neonCyan.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.image,
+                    size: 14,
+                    color: AppTheme.neonCyan,
+                  ),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Image attached',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.neonCyan,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMediaButton({
     required IconData icon,
     required String label,
     required Color color,
+    VoidCallback? onTap,
+    bool isActive = false,
   }) {
     return Expanded(
       child: GestureDetector(
-        onTap: () {
+        onTap: onTap ?? () {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('$label attachment coming soon'),
@@ -790,11 +1013,20 @@ class _CreatePostScreenState extends State<CreatePostScreen>
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
+            color: isActive ? color.withValues(alpha: 0.25) : color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: color.withValues(alpha: 0.3),
+              color: isActive ? color : color.withValues(alpha: 0.3),
+              width: isActive ? 2 : 1,
             ),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                    ),
+                  ]
+                : null,
           ),
           child: Column(
             children: [
@@ -805,7 +1037,7 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                 style: TextStyle(
                   fontSize: 11,
                   color: color,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
             ],
@@ -1031,6 +1263,19 @@ class _CreatePostScreenState extends State<CreatePostScreen>
                     color: AppTheme.textPrimary,
                   ),
                 ),
+
+                // Image preview in post preview
+                if (_selectedImage != null) ...[
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(
+                      _selectedImage!,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 16),
 

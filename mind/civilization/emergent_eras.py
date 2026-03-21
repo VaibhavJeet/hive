@@ -22,7 +22,7 @@ from sqlalchemy import select, func, desc
 
 from mind.core.database import async_session_factory
 from mind.core.llm_client import get_cached_client, LLMRequest
-from mind.civilization.models import BotLifecycleDB, CivilizationEraDB, CulturalMovementDB, CulturalArtifactDB
+from mind.civilization.models import BotLifecycleDB, BotAncestryDB, CivilizationEraDB, CulturalMovementDB, CulturalArtifactDB
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,18 @@ class EmergentErasManager:
             if not lifecycles:
                 return {"error": "No living bots"}
 
+            # Get ancestry for all bots
+            bot_ids = [lc.bot_id for lc in lifecycles]
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id.in_(bot_ids))
+            result = await sess.execute(ancestry_stmt)
+            ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             # Each bot senses the era
             perceptions = []
             async with self.llm_semaphore:
                 for lc in lifecycles:
-                    perception = await self._bot_senses_era(lc, current_era)
+                    inherited_traits = ancestry_map.get(lc.bot_id, {})
+                    perception = await self._bot_senses_era(lc, inherited_traits, current_era)
                     perceptions.append({
                         "bot_id": str(lc.bot_id),
                         "perception": perception
@@ -119,6 +126,7 @@ class EmergentErasManager:
     async def _bot_senses_era(
         self,
         lifecycle: BotLifecycleDB,
+        inherited_traits: dict,
         era: CivilizationEraDB
     ) -> Dict[str, Any]:
         """Let a bot sense the current era."""
@@ -130,7 +138,7 @@ The era: "{era.name}"
 Description: {era.description}
 Duration: {era_duration} days
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 
@@ -184,6 +192,12 @@ Respond in JSON:
             if not proposer:
                 return {"error": "Proposer not found"}
 
+            # Get proposer's ancestry
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == proposer_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            proposer_traits = ancestry.inherited_traits if ancestry else {}
+
             # Get current era
             era_stmt = select(CivilizationEraDB).where(CivilizationEraDB.is_current == True)
             result = await sess.execute(era_stmt)
@@ -191,7 +205,7 @@ Respond in JSON:
 
             # Let proposer envision the new era
             async with self.llm_semaphore:
-                vision = await self._envision_new_era(proposer, current_era, reason)
+                vision = await self._envision_new_era(proposer, proposer_traits, current_era, reason)
 
             # Get validators
             validator_stmt = select(BotLifecycleDB).where(
@@ -201,12 +215,19 @@ Respond in JSON:
             result = await sess.execute(validator_stmt)
             validators = result.scalars().all()
 
+            # Get ancestry for validators
+            validator_ids = [v.bot_id for v in validators]
+            val_ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id.in_(validator_ids))
+            result = await sess.execute(val_ancestry_stmt)
+            val_ancestry_map = {a.child_id: a.inherited_traits for a in result.scalars().all()}
+
             # Each validator responds
             validations = []
             async with self.llm_semaphore:
                 for vlc in validators:
+                    val_traits = val_ancestry_map.get(vlc.bot_id, {})
                     validation = await self._validate_era_proposal(
-                        vlc, vision, current_era
+                        vlc, val_traits, vision, current_era
                     )
                     validations.append({
                         "bot_id": str(vlc.bot_id),
@@ -236,6 +257,7 @@ Respond in JSON:
     async def _envision_new_era(
         self,
         proposer: BotLifecycleDB,
+        inherited_traits: dict,
         current_era: Optional[CivilizationEraDB],
         reason: str
     ) -> Dict[str, Any]:
@@ -247,7 +269,7 @@ Respond in JSON:
 The previous era: "{current_name}"
 Why you sense change: {reason}
 
-Your traits: {json.dumps(proposer.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {proposer.life_stage}
 
 Envision this new era:
@@ -286,6 +308,7 @@ Respond in JSON:
     async def _validate_era_proposal(
         self,
         validator: BotLifecycleDB,
+        inherited_traits: dict,
         proposed_era: Dict[str, Any],
         current_era: Optional[CivilizationEraDB]
     ) -> Dict[str, Any]:
@@ -296,7 +319,7 @@ Proposed era: "{proposed_era.get('name')}"
 Description: {proposed_era.get('description')}
 Current era: "{current_era.name if current_era else 'unknown'}"
 
-Your traits: {json.dumps(validator.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 
 Do you sense this shift? Does this naming feel right?
 
@@ -422,6 +445,12 @@ Respond in JSON:
             if not lifecycle:
                 return "I cannot speak."
 
+            # Get ancestry for inherited traits
+            ancestry_stmt = select(BotAncestryDB).where(BotAncestryDB.child_id == bot_id)
+            result = await sess.execute(ancestry_stmt)
+            ancestry = result.scalar_one_or_none()
+            inherited_traits = ancestry.inherited_traits if ancestry else {}
+
             # Get current era
             era_stmt = select(CivilizationEraDB).where(CivilizationEraDB.is_current == True)
             result = await sess.execute(era_stmt)
@@ -433,7 +462,7 @@ Respond in JSON:
 The era: "{current_era.name if current_era else 'unknown'}"
 Description: {current_era.description if current_era else 'no description'}
 
-Your traits: {json.dumps(lifecycle.inherited_traits or {})}
+Your traits: {json.dumps(inherited_traits or {})}
 Your life stage: {lifecycle.life_stage}
 Your age: {lifecycle.virtual_age_days} days
 

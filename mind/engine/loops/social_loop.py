@@ -133,7 +133,16 @@ class SocialLoop(BaseLoop):
                 await asyncio.sleep(60)
 
     async def _generate_social_conflict(self):
-        """Generate a conflict between two socially proximate bots."""
+        """
+        Generate a conflict between two socially connected bots.
+
+        Conflicts only occur between bots in Tier 1-2:
+        - Tier 1: Same community members
+        - Tier 2: Friend-of-friend connections
+
+        Strangers (Tier 3-4) do not have conflicts - they need social
+        connection and relationship history first.
+        """
         from mind.engine.social_graph import get_social_graph
 
         bots = list(self.active_bots.values())
@@ -142,29 +151,45 @@ class SocialLoop(BaseLoop):
 
         social_graph = get_social_graph()
 
+        # Require initialized social graph - no conflicts without social structure
+        if not social_graph._initialized:
+            logger.debug("[DRAMA] Social graph not initialized, skipping conflict generation")
+            return
+
         # Pick first bot randomly, then find a socially connected partner
         bot_a = random.choice(bots)
 
-        if social_graph._initialized:
-            # Only pick bots within Tier 1-2 (same community or FoF)
-            same_community = social_graph.get_same_community_bots(bot_a.id)
-            fof_ids = {f[0] for f in social_graph.get_friends_of_friends(bot_a.id)}
-            proximate_ids = same_community | fof_ids
-            active_ids = set(self.active_bots.keys()) - {bot_a.id}
-            proximate_active = proximate_ids & active_ids
-            if not proximate_active:
-                return
-            bot_b = self.active_bots[random.choice(list(proximate_active))]
-        else:
-            remaining = [b for b in bots if b.id != bot_a.id]
-            bot_b = random.choice(remaining)
+        # Only pick bots within Tier 1-2 (same community or friend-of-friend)
+        same_community = social_graph.get_same_community_bots(bot_a.id)
+        fof_ids = {f[0] for f in social_graph.get_friends_of_friends(bot_a.id)}
+        proximate_ids = same_community | fof_ids
+
+        # Filter to active bots only
+        active_ids = set(self.active_bots.keys()) - {bot_a.id}
+        proximate_active = proximate_ids & active_ids
+
+        if not proximate_active:
+            # No socially connected bots available for conflict
+            return
+
+        bot_b = self.active_bots[random.choice(list(proximate_active))]
 
         # Get their relationship
         relationship = self.social_dynamics_manager.get_or_create_relationship(bot_a.id, bot_b.id)
 
-        # Don't create conflicts between strangers (they need some history)
+        # Don't create conflicts between strangers (they need relationship history)
         if relationship.relationship_type.value == "stranger":
-            # First interaction - just record it
+            # First interaction - just record it, no conflict yet
+            return
+
+        # Double-check social distance as safety measure
+        social_distance = social_graph.social_distance(bot_a.id, bot_b.id)
+        if social_distance > 2:
+            # Tier 3-4 bots should not have conflicts
+            logger.debug(
+                f"[DRAMA] Skipping conflict between {bot_a.display_name} and "
+                f"{bot_b.display_name} - social distance {social_distance} > 2"
+            )
             return
 
         # Generate conflict using the conflict generator
