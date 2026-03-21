@@ -199,6 +199,10 @@ class FeedProvider extends ChangeNotifier {
 
       // Add to local posts list
       _posts.insert(0, post);
+
+      // Invalidate feed cache since we have new data
+      await _offlineService.invalidateFeedCache(communityId: communityId);
+
       notifyListeners();
 
       return post;

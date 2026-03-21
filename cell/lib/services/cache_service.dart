@@ -1,5 +1,6 @@
 // Cache service for local data storage with TTL support
 
+import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
@@ -18,6 +19,19 @@ class CachedData {
 
   bool get isExpired => DateTime.now().difference(cachedAt) > ttl;
 
+  /// Get remaining time before expiration
+  Duration get remainingTtl {
+    final elapsed = DateTime.now().difference(cachedAt);
+    final remaining = ttl - elapsed;
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  /// Get expiration time
+  DateTime get expiresAt => cachedAt.add(ttl);
+
+  /// Get age of cached data
+  Duration get age => DateTime.now().difference(cachedAt);
+
   factory CachedData.fromJson(Map<String, dynamic> json) {
     return CachedData(
       data: json['data'],
@@ -32,6 +46,36 @@ class CachedData {
       'cached_at': cachedAt.toIso8601String(),
       'ttl_ms': ttl.inMilliseconds,
     };
+  }
+}
+
+/// Metadata about a cached item (without the actual data)
+class CacheMetadata {
+  final String key;
+  final DateTime cachedAt;
+  final Duration ttl;
+  final bool isExpired;
+  final Duration remainingTtl;
+  final DateTime expiresAt;
+
+  CacheMetadata({
+    required this.key,
+    required this.cachedAt,
+    required this.ttl,
+    required this.isExpired,
+    required this.remainingTtl,
+    required this.expiresAt,
+  });
+
+  factory CacheMetadata.fromCachedData(String key, CachedData data) {
+    return CacheMetadata(
+      key: key,
+      cachedAt: data.cachedAt,
+      ttl: data.ttl,
+      isExpired: data.isExpired,
+      remainingTtl: data.remainingTtl,
+      expiresAt: data.expiresAt,
+    );
   }
 }
 
@@ -50,6 +94,10 @@ class CacheService {
   static const Duration conversationsTtl = Duration(hours: 2);
   static const Duration communitiesTtl = Duration(hours: 6);
 
+  // Auto-cleanup configuration
+  static const Duration _cleanupInterval = Duration(minutes: 15);
+  Timer? _cleanupTimer;
+
   CacheService._();
 
   static CacheService get instance {
@@ -62,6 +110,38 @@ class CacheService {
     if (_initialized) return;
     _prefs = await SharedPreferences.getInstance();
     _initialized = true;
+
+    // Start automatic cleanup timer
+    _startAutoCleanup();
+
+    // Perform initial cleanup of any expired items
+    clearExpiredCache().then((count) {
+      if (count > 0) {
+        debugPrint('CacheService: Cleaned up $count expired items on init');
+      }
+    });
+  }
+
+  /// Start automatic cleanup timer
+  void _startAutoCleanup() {
+    _cleanupTimer?.cancel();
+    _cleanupTimer = Timer.periodic(_cleanupInterval, (_) async {
+      final count = await clearExpiredCache();
+      if (count > 0) {
+        debugPrint('CacheService: Auto-cleaned $count expired items');
+      }
+    });
+  }
+
+  /// Stop automatic cleanup timer
+  void stopAutoCleanup() {
+    _cleanupTimer?.cancel();
+    _cleanupTimer = null;
+  }
+
+  /// Dispose the cache service
+  void dispose() {
+    stopAutoCleanup();
   }
 
   /// Ensure service is initialized
@@ -170,6 +250,197 @@ class CacheService {
     }
 
     return clearedCount;
+  }
+
+  // ========================================================================
+  // CACHE INVALIDATION METHODS
+  // ========================================================================
+
+  /// Invalidate (remove) multiple cache keys at once
+  Future<int> invalidateKeys(List<String> keys) async {
+    await _ensureInitialized();
+
+    int removedCount = 0;
+    for (final key in keys) {
+      final removed = await _prefs!.remove('$_cachePrefix$key');
+      if (removed) removedCount++;
+    }
+
+    debugPrint('CacheService: Invalidated $removedCount of ${keys.length} keys');
+    return removedCount;
+  }
+
+  /// Invalidate all cache entries matching a prefix pattern
+  /// Example: invalidateByPrefix('feed_') removes all feed caches
+  Future<int> invalidateByPrefix(String prefix) async {
+    await _ensureInitialized();
+
+    final fullPrefix = '$_cachePrefix$prefix';
+    final keysToRemove = _prefs!.getKeys()
+        .where((k) => k.startsWith(fullPrefix))
+        .toList();
+
+    int removedCount = 0;
+    for (final key in keysToRemove) {
+      await _prefs!.remove(key);
+      removedCount++;
+    }
+
+    debugPrint('CacheService: Invalidated $removedCount keys with prefix "$prefix"');
+    return removedCount;
+  }
+
+  /// Invalidate all cache entries matching a pattern (supports * wildcard)
+  /// Example: invalidateByPattern('chat_*_messages')
+  Future<int> invalidateByPattern(String pattern) async {
+    await _ensureInitialized();
+
+    // Convert simple wildcard pattern to regex
+    final regexPattern = pattern
+        .replaceAll('.', '\\.')
+        .replaceAll('*', '.*');
+    final regex = RegExp('^$_cachePrefix$regexPattern\$');
+
+    final keysToRemove = _prefs!.getKeys()
+        .where((k) => regex.hasMatch(k))
+        .toList();
+
+    int removedCount = 0;
+    for (final key in keysToRemove) {
+      await _prefs!.remove(key);
+      removedCount++;
+    }
+
+    debugPrint('CacheService: Invalidated $removedCount keys matching pattern "$pattern"');
+    return removedCount;
+  }
+
+  /// Invalidate all feed-related caches
+  Future<int> invalidateAllFeeds() async {
+    return await invalidateByPrefix('feed_');
+  }
+
+  /// Invalidate all chat-related caches
+  Future<int> invalidateAllChats() async {
+    return await invalidateByPrefix('chat_');
+  }
+
+  /// Invalidate all DM-related caches
+  Future<int> invalidateAllDMs() async {
+    return await invalidateByPrefix('dm_');
+  }
+
+  /// Invalidate all conversation-related caches
+  Future<int> invalidateAllConversations() async {
+    return await invalidateByPrefix('conversations_');
+  }
+
+  /// Refresh a cached item's TTL without changing the data
+  Future<bool> refreshTtl(String key, {Duration? ttl}) async {
+    await _ensureInitialized();
+
+    try {
+      final jsonStr = _prefs!.getString('$_cachePrefix$key');
+      if (jsonStr == null) return false;
+
+      final cachedData = CachedData.fromJson(jsonDecode(jsonStr));
+      final newCachedData = CachedData(
+        data: cachedData.data,
+        cachedAt: DateTime.now(),
+        ttl: ttl ?? cachedData.ttl,
+      );
+
+      final newJsonStr = jsonEncode(newCachedData.toJson());
+      return await _prefs!.setString('$_cachePrefix$key', newJsonStr);
+    } catch (e) {
+      debugPrint('CacheService: Failed to refresh TTL for key $key: $e');
+      return false;
+    }
+  }
+
+  // ========================================================================
+  // CACHE METADATA METHODS
+  // ========================================================================
+
+  /// Get metadata for a cached item without loading the data
+  Future<CacheMetadata?> getCacheMetadata(String key) async {
+    await _ensureInitialized();
+
+    try {
+      final jsonStr = _prefs!.getString('$_cachePrefix$key');
+      if (jsonStr == null) return null;
+
+      final cachedData = CachedData.fromJson(jsonDecode(jsonStr));
+      return CacheMetadata.fromCachedData(key, cachedData);
+    } catch (e) {
+      debugPrint('CacheService: Failed to get metadata for key $key: $e');
+      return null;
+    }
+  }
+
+  /// Get metadata for all cached items
+  Future<List<CacheMetadata>> getAllCacheMetadata() async {
+    await _ensureInitialized();
+
+    final metadataList = <CacheMetadata>[];
+    final keys = _prefs!.getKeys().where((k) => k.startsWith(_cachePrefix));
+
+    for (final fullKey in keys) {
+      try {
+        final jsonStr = _prefs!.getString(fullKey);
+        if (jsonStr == null) continue;
+
+        final key = fullKey.substring(_cachePrefix.length);
+        final cachedData = CachedData.fromJson(jsonDecode(jsonStr));
+        metadataList.add(CacheMetadata.fromCachedData(key, cachedData));
+      } catch (e) {
+        // Skip corrupted entries
+        continue;
+      }
+    }
+
+    return metadataList;
+  }
+
+  /// Get all cache keys
+  Future<List<String>> getAllCacheKeys() async {
+    await _ensureInitialized();
+
+    return _prefs!.getKeys()
+        .where((k) => k.startsWith(_cachePrefix))
+        .map((k) => k.substring(_cachePrefix.length))
+        .toList();
+  }
+
+  /// Get all expired cache keys
+  Future<List<String>> getExpiredCacheKeys() async {
+    await _ensureInitialized();
+
+    final expiredKeys = <String>[];
+    final keys = _prefs!.getKeys().where((k) => k.startsWith(_cachePrefix));
+
+    for (final fullKey in keys) {
+      try {
+        final jsonStr = _prefs!.getString(fullKey);
+        if (jsonStr == null) continue;
+
+        final cachedData = CachedData.fromJson(jsonDecode(jsonStr));
+        if (cachedData.isExpired) {
+          expiredKeys.add(fullKey.substring(_cachePrefix.length));
+        }
+      } catch (e) {
+        // Include corrupted entries as "expired"
+        expiredKeys.add(fullKey.substring(_cachePrefix.length));
+      }
+    }
+
+    return expiredKeys;
+  }
+
+  /// Check remaining TTL for a cached item
+  Future<Duration?> getRemainingTtl(String key) async {
+    final metadata = await getCacheMetadata(key);
+    return metadata?.remainingTtl;
   }
 
   /// Get approximate cache size in bytes

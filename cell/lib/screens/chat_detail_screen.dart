@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
+import '../providers/app_state.dart';
 import '../providers/chat_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/design_system.dart';
@@ -28,6 +30,8 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
   final FocusNode _inputFocusNode = FocusNode();
   BotProfile? _botProfile;
   bool _isLoading = true;
+  bool _isUserTyping = false;
+  Timer? _typingDebounceTimer;
 
   @override
   void initState() {
@@ -37,10 +41,39 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   @override
   void dispose() {
+    _typingDebounceTimer?.cancel();
+    _stopTyping();
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged(String text) {
+    final appState = context.read<AppState>();
+    final botId = _botProfile?.id ?? widget.botId;
+
+    // Start typing indicator
+    if (text.isNotEmpty && !_isUserTyping) {
+      _isUserTyping = true;
+      appState.websocket.sendTypingStart(botId);
+    }
+
+    // Reset the debounce timer
+    _typingDebounceTimer?.cancel();
+    _typingDebounceTimer = Timer(const Duration(seconds: 2), () {
+      _stopTyping();
+    });
+  }
+
+  void _stopTyping() {
+    if (!_isUserTyping) return;
+
+    final appState = context.read<AppState>();
+    final botId = _botProfile?.id ?? widget.botId;
+
+    appState.websocket.sendTypingStop(botId);
+    _isUserTyping = false;
   }
 
   Future<void> _loadBotAndMessages() async {
@@ -73,6 +106,10 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
 
   void _sendMessage() {
     if (_messageController.text.trim().isEmpty) return;
+
+    // Stop typing indicator when sending
+    _typingDebounceTimer?.cancel();
+    _stopTyping();
 
     final chatProvider = context.read<ChatProvider>();
     chatProvider.sendDirectMessage(_messageController.text.trim());
@@ -389,6 +426,7 @@ class _ChatDetailScreenState extends State<ChatDetailScreen> {
                     vertical: 10,
                   ),
                 ),
+                onChanged: _onTextChanged,
                 onSubmitted: (_) => _sendMessage(),
                 textCapitalization: TextCapitalization.sentences,
               ),
@@ -701,15 +739,23 @@ class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderState
           builder: (context, child) {
             final delay = index * 0.2;
             final value = ((_controller.value - delay) % 1.0).clamp(0.0, 1.0);
-            final opacity = value < 0.5 ? value * 2 : (1 - value) * 2;
+            // Bouncing effect with smooth easing
+            final bounce = value < 0.5
+                ? (value * 2)
+                : (1 - (value - 0.5) * 2);
+            final yOffset = -3 * bounce;
+            final opacity = 0.4 + bounce * 0.6;
 
-            return Container(
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: AppTheme.textMuted.withValues(alpha: 0.3 + opacity * 0.7),
-                shape: BoxShape.circle,
+            return Transform.translate(
+              offset: Offset(0, yOffset),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: AppTheme.textMuted.withValues(alpha: opacity),
+                  shape: BoxShape.circle,
+                ),
               ),
             );
           },

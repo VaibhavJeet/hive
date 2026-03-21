@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -24,6 +25,8 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
   String? _replyToId;
   String? _replyToContent;
   bool _isInputFocused = false;
+  bool _isUserTyping = false;
+  Timer? _typingDebounceTimer;
   late AnimationController _pulseController;
   late AnimationController _memberDrawerController;
 
@@ -55,6 +58,8 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
 
   @override
   void dispose() {
+    _typingDebounceTimer?.cancel();
+    _stopTyping();
     _messageController.dispose();
     _scrollController.dispose();
     _inputFocusNode.removeListener(_onFocusChanged);
@@ -64,8 +69,45 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
     super.dispose();
   }
 
+  void _onTextChanged(String text) {
+    final appState = context.read<AppState>();
+    final community = appState.selectedCommunity;
+    final userId = appState.currentUser?.id;
+
+    if (community == null || userId == null) return;
+
+    // Start typing indicator
+    if (text.isNotEmpty && !_isUserTyping) {
+      _isUserTyping = true;
+      appState.websocket.sendCommunityTypingStart(community.id, userId);
+    }
+
+    // Reset the debounce timer
+    _typingDebounceTimer?.cancel();
+    _typingDebounceTimer = Timer(const Duration(seconds: 2), () {
+      _stopTyping();
+    });
+  }
+
+  void _stopTyping() {
+    if (!_isUserTyping) return;
+
+    final appState = context.read<AppState>();
+    final community = appState.selectedCommunity;
+    final userId = appState.currentUser?.id;
+
+    if (community != null && userId != null) {
+      appState.websocket.sendCommunityTypingStop(community.id, userId);
+    }
+    _isUserTyping = false;
+  }
+
   void _sendMessage() {
     if (_messageController.text.trim().isEmpty) return;
+
+    // Stop typing indicator when sending
+    _typingDebounceTimer?.cancel();
+    _stopTyping();
 
     final appState = context.read<AppState>();
     appState.sendChatMessage(
@@ -126,6 +168,9 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
                             ? _buildChatLoadingState()
                             : _buildMessageList(appState),
                   ),
+                  if (appState.selectedCommunity != null &&
+                      appState.communityTypingUsers.isNotEmpty)
+                    _buildCommunityTypingIndicator(appState),
                   if (appState.selectedCommunity != null)
                     _buildMessageInput(appState),
                 ],
@@ -629,6 +674,51 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
     return Icons.info_outline_rounded;
   }
 
+  Widget _buildCommunityTypingIndicator(AppState appState) {
+    final typingUsers = appState.communityTypingUsers.values.toList();
+    if (typingUsers.isEmpty) return const SizedBox.shrink();
+
+    String typingText;
+    if (typingUsers.length == 1) {
+      typingText = '${typingUsers.first} is typing';
+    } else if (typingUsers.length == 2) {
+      typingText = '${typingUsers[0]} and ${typingUsers[1]} are typing';
+    } else {
+      typingText = '${typingUsers[0]} and ${typingUsers.length - 1} others are typing';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              gradient: AppTheme.glassGradient,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.glassBorder),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const _CommunityTypingDots(),
+                const SizedBox(width: 8),
+                Text(
+                  typingText,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMessageInput(AppState appState) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -695,6 +785,7 @@ class _CommunityChatScreenState extends State<CommunityChatScreen>
                             vertical: 12,
                           ),
                         ),
+                        onChanged: _onTextChanged,
                         onSubmitted: (_) => _sendMessage(),
                       ),
                     ),
@@ -1260,6 +1351,79 @@ class _ChatBubbleState extends State<_ChatBubble>
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Animated typing dots for community chat
+class _CommunityTypingDots extends StatefulWidget {
+  const _CommunityTypingDots();
+
+  @override
+  State<_CommunityTypingDots> createState() => _CommunityTypingDotsState();
+}
+
+class _CommunityTypingDotsState extends State<_CommunityTypingDots>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1200),
+      vsync: this,
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(3, (index) {
+        return AnimatedBuilder(
+          animation: _controller,
+          builder: (context, child) {
+            final delay = index * 0.2;
+            final value = ((_controller.value - delay) % 1.0).clamp(0.0, 1.0);
+            // Bouncing effect
+            final bounce = value < 0.5
+                ? (value * 2)
+                : (1 - (value - 0.5) * 2);
+            final yOffset = -4 * bounce;
+
+            return Transform.translate(
+              offset: Offset(0, yOffset),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.neonCyan.withValues(alpha: 0.6 + bounce * 0.4),
+                      AppTheme.neonGreen.withValues(alpha: 0.6 + bounce * 0.4),
+                    ],
+                  ),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.neonCyan.withValues(alpha: 0.3 * bounce),
+                      blurRadius: 4,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      }),
     );
   }
 }

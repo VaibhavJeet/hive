@@ -38,6 +38,7 @@ class WebSocketService {
   final StreamController<ChatMessage> _newChatMessageController = StreamController<ChatMessage>.broadcast();
   final StreamController<DirectMessage> _newDmController = StreamController<DirectMessage>.broadcast();
   final StreamController<String> _typingController = StreamController<String>.broadcast();
+  final StreamController<Map<String, dynamic>> _communityTypingController = StreamController<Map<String, dynamic>>.broadcast();
 
   // Expose streams
   Stream<Post> get onNewPost => _newPostController.stream;
@@ -46,6 +47,7 @@ class WebSocketService {
   Stream<ChatMessage> get onNewChatMessage => _newChatMessageController.stream;
   Stream<DirectMessage> get onNewDm => _newDmController.stream;
   Stream<String> get onTyping => _typingController.stream;
+  Stream<Map<String, dynamic>> get onCommunityTyping => _communityTypingController.stream;
 
   bool get isConnected => _isConnected;
   Stream<bool> get connectionState => _connectionStateController.stream;
@@ -130,6 +132,22 @@ class WebSocketService {
           break;
         case 'typing_stop':
           _typingController.add('');
+          break;
+        case 'community_typing_start':
+          _communityTypingController.add({
+            'community_id': eventData['community_id'] ?? '',
+            'user_id': eventData['user_id'] ?? '',
+            'user_name': eventData['user_name'] ?? '',
+            'is_typing': true,
+          });
+          break;
+        case 'community_typing_stop':
+          _communityTypingController.add({
+            'community_id': eventData['community_id'] ?? '',
+            'user_id': eventData['user_id'] ?? '',
+            'user_name': eventData['user_name'] ?? '',
+            'is_typing': false,
+          });
           break;
         default:
           // Call registered handlers
@@ -296,6 +314,40 @@ class WebSocketService {
     });
   }
 
+  /// Send typing start event for DM conversations
+  void sendTypingStart(String recipientId) {
+    send({
+      'type': 'typing_start',
+      'recipient_id': recipientId,
+    });
+  }
+
+  /// Send typing stop event for DM conversations
+  void sendTypingStop(String recipientId) {
+    send({
+      'type': 'typing_stop',
+      'recipient_id': recipientId,
+    });
+  }
+
+  /// Send typing start event for community chat
+  void sendCommunityTypingStart(String communityId, String userId) {
+    send({
+      'type': 'community_typing_start',
+      'community_id': communityId,
+      'user_id': userId,
+    });
+  }
+
+  /// Send typing stop event for community chat
+  void sendCommunityTypingStop(String communityId, String userId) {
+    send({
+      'type': 'community_typing_stop',
+      'community_id': communityId,
+      'user_id': userId,
+    });
+  }
+
   void subscribeToCommunity(String communityId) {
     send({
       'type': 'subscribe',
@@ -327,6 +379,7 @@ class WebSocketService {
     _newChatMessageController.close();
     _newDmController.close();
     _typingController.close();
+    _communityTypingController.close();
     _connectionStateController.close();
   }
 }

@@ -5,7 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../models/notification_model.dart';
 import '../services/api_service.dart';
-import '../services/cache_service.dart';
+import '../services/cache_service.dart' show CacheService, CacheMetadata;
 import '../services/offline_service.dart';
 import '../services/websocket_service.dart';
 
@@ -75,6 +75,7 @@ class AppState extends ChangeNotifier {
   List<DirectMessage> get directMessages => chatProvider.directMessages;
   BotProfile? get selectedBot => chatProvider.selectedBot;
   bool get isTyping => chatProvider.isTyping;
+  Map<String, String> get communityTypingUsers => chatProvider.communityTypingUsers;
 
   // Notification state
   List<NotificationModel> get notifications => notificationProvider.notifications;
@@ -241,9 +242,20 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     });
 
-    // Typing indicator
+    // Typing indicator for DMs
     _ws.onTyping.listen((botId) {
       chatProvider.updateTypingIndicator(botId);
+      notifyListeners();
+    });
+
+    // Community typing indicator
+    _ws.onCommunityTyping.listen((data) {
+      chatProvider.updateCommunityTyping(
+        data['community_id'] as String,
+        data['user_id'] as String,
+        data['user_name'] as String,
+        data['is_typing'] as bool,
+      );
       notifyListeners();
     });
   }
@@ -290,6 +302,7 @@ class AppState extends ChangeNotifier {
     // Update feed and chat providers
     feedProvider.setSelectedCommunityId(community?.id);
     chatProvider.setSelectedCommunityId(community?.id);
+    chatProvider.clearCommunityTyping();
 
     if (community != null) {
       chatProvider.loadCommunityChat(community.id);
@@ -384,6 +397,36 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear expired cache entries
+  Future<int> clearExpiredCache() async {
+    return await _cacheService.clearExpiredCache();
+  }
+
+  /// Invalidate feed cache (useful after creating a post)
+  Future<void> invalidateFeedCache() async {
+    await _cacheService.invalidateAllFeeds();
+  }
+
+  /// Invalidate chat cache for a specific community
+  Future<void> invalidateChatCache(String communityId) async {
+    await _cacheService.removeCachedData('chat_$communityId');
+  }
+
+  /// Invalidate DM cache for a specific conversation
+  Future<void> invalidateDMCache(String conversationId) async {
+    await _cacheService.removeCachedData('dm_$conversationId');
+  }
+
+  /// Invalidate all conversation-related caches
+  Future<void> invalidateConversationsCache() async {
+    await _cacheService.invalidateAllConversations();
+  }
+
+  /// Get cache metadata for debugging/display
+  Future<List<CacheMetadata>> getCacheMetadata() async {
+    return await _cacheService.getAllCacheMetadata();
+  }
+
   // ========================================================================
   // CLEANUP
   // ========================================================================
@@ -395,6 +438,7 @@ class AppState extends ChangeNotifier {
     _api.dispose();
     notificationProvider.disposeService();
     _offlineService.dispose();
+    _cacheService.dispose();
     super.dispose();
   }
 }

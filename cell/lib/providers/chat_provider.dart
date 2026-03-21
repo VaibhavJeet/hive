@@ -20,6 +20,9 @@ class ChatProvider extends ChangeNotifier {
   BotProfile? _selectedBot;
   bool _isTyping = false;
 
+  // Community typing state - maps user_id to user_name for currently typing users
+  final Map<String, String> _communityTypingUsers = {};
+
   // Current user ID and online status
   String? _currentUserId;
   bool _isOnline = true;
@@ -38,6 +41,7 @@ class ChatProvider extends ChangeNotifier {
   List<DirectMessage> get directMessages => _directMessages;
   BotProfile? get selectedBot => _selectedBot;
   bool get isTyping => _isTyping;
+  Map<String, String> get communityTypingUsers => Map.unmodifiable(_communityTypingUsers);
 
   // Setters
   void setCurrentUserId(String? userId) {
@@ -79,6 +83,24 @@ class ChatProvider extends ChangeNotifier {
   // Update typing indicator (for WebSocket updates)
   void updateTypingIndicator(String botId) {
     _isTyping = botId.isNotEmpty && _selectedBot?.id == botId;
+    notifyListeners();
+  }
+
+  // Update community typing users (for WebSocket updates)
+  void updateCommunityTyping(String communityId, String userId, String userName, bool isTyping) {
+    if (communityId != _selectedCommunityId) return;
+
+    if (isTyping) {
+      _communityTypingUsers[userId] = userName;
+    } else {
+      _communityTypingUsers.remove(userId);
+    }
+    notifyListeners();
+  }
+
+  // Clear community typing users when switching communities
+  void clearCommunityTyping() {
+    _communityTypingUsers.clear();
     notifyListeners();
   }
 
@@ -189,6 +211,14 @@ class ChatProvider extends ChangeNotifier {
         content,
       );
       _directMessages.add(message);
+
+      // Invalidate DM cache since we have new data
+      if (_selectedConversationId != null) {
+        await _offlineService.invalidateDMCache(_selectedConversationId!);
+      }
+      // Also invalidate conversations list cache
+      await _offlineService.invalidateConversationsCache(_currentUserId!);
+
       notifyListeners();
 
       // Request bot response via WebSocket

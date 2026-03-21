@@ -21,8 +21,14 @@ class OfflineService {
   bool _initialized = false;
   bool _isOnline = true;
 
-  // Queue storage key
+  // Queue storage keys
   static const String _queueKey = 'offline_action_queue';
+  static const String _deadLetterQueueKey = 'offline_dead_letter_queue';
+
+  // Retry configuration
+  static const int _maxRetryAttempts = 3;
+  static const Duration _baseRetryDelay = Duration(seconds: 1);
+  static const double _backoffMultiplier = 2.0;
 
   // Connectivity stream
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
@@ -30,11 +36,13 @@ class OfflineService {
 
   // Action queue
   List<OfflineAction> _actionQueue = [];
+  List<OfflineAction> _deadLetterQueue = [];
   bool _isProcessingQueue = false;
 
   // Callbacks
   Function(OfflineAction action)? onActionProcessed;
   Function(OfflineAction action, String error)? onActionFailed;
+  Function(OfflineAction action)? onActionMovedToDeadLetter;
 
   OfflineService._();
 
@@ -50,8 +58,9 @@ class OfflineService {
     _prefs = await SharedPreferences.getInstance();
     await _cache.initialize();
 
-    // Load persisted queue
+    // Load persisted queues
     await _loadQueue();
+    await _loadDeadLetterQueue();
 
     // Check initial connectivity
     final results = await _connectivity.checkConnectivity();
@@ -82,6 +91,12 @@ class OfflineService {
 
   /// Get all queued actions
   List<OfflineAction> get queuedActions => List.unmodifiable(_actionQueue);
+
+  /// Get dead letter queue count
+  int get deadLetterQueueCount => _deadLetterQueue.length;
+
+  /// Get all dead letter queue actions
+  List<OfflineAction> get deadLetterQueueActions => List.unmodifiable(_deadLetterQueue);
 
   /// Update online status based on connectivity result
   void _updateOnlineStatus(List<ConnectivityResult> results) {
@@ -187,6 +202,56 @@ class OfflineService {
   }
 
   // ========================================================================
+  // CACHE INVALIDATION METHODS
+  // ========================================================================
+
+  /// Invalidate feed cache (call after creating/deleting posts)
+  Future<int> invalidateFeedCache({String? communityId}) async {
+    await _ensureInitialized();
+    if (communityId != null) {
+      await _cache.removeCachedData('feed_$communityId');
+      return 1;
+    }
+    return await _cache.invalidateAllFeeds();
+  }
+
+  /// Invalidate chat cache for a community
+  Future<bool> invalidateChatCache(String communityId) async {
+    await _ensureInitialized();
+    return await _cache.removeCachedData('chat_$communityId');
+  }
+
+  /// Invalidate DM cache for a conversation
+  Future<bool> invalidateDMCache(String conversationId) async {
+    await _ensureInitialized();
+    return await _cache.removeCachedData('dm_$conversationId');
+  }
+
+  /// Invalidate conversations cache for a user
+  Future<bool> invalidateConversationsCache(String userId) async {
+    await _ensureInitialized();
+    return await _cache.removeCachedData('conversations_$userId');
+  }
+
+  /// Invalidate communities cache
+  Future<bool> invalidateCommunitiesCache() async {
+    await _ensureInitialized();
+    return await _cache.removeCachedData('communities');
+  }
+
+  /// Clear all expired cache entries
+  Future<int> clearExpiredCache() async {
+    await _ensureInitialized();
+    return await _cache.clearExpiredCache();
+  }
+
+  /// Get remaining TTL for a cached item
+  Future<Duration?> getCacheRemainingTtl(String key) async {
+    await _ensureInitialized();
+    return await _cache.getRemainingTtl(key);
+  }
+
+  // ========================================================================
   // ACTION QUEUE METHODS
   // ========================================================================
 
@@ -213,7 +278,16 @@ class OfflineService {
     return action.id;
   }
 
-  /// Process queued actions
+  /// Calculate exponential backoff delay for retry attempts
+  Duration _calculateBackoffDelay(int retryCount) {
+    // Exponential backoff: baseDelay * (multiplier ^ retryCount)
+    // e.g., 1s, 2s, 4s for retries 0, 1, 2
+    final delayMs = _baseRetryDelay.inMilliseconds *
+        (1 << retryCount); // Using bit shift for power of 2 (equivalent to multiplier of 2)
+    return Duration(milliseconds: delayMs);
+  }
+
+  /// Process queued actions with exponential backoff retry logic
   Future<void> processQueue() async {
     if (_isProcessingQueue || _actionQueue.isEmpty || !_isOnline) return;
 
@@ -223,27 +297,78 @@ class OfflineService {
     final actionsToProcess = List<OfflineAction>.from(_actionQueue);
 
     for (final action in actionsToProcess) {
-      try {
-        await _processAction(action);
+      // Check if we're still online before processing each action
+      if (!_isOnline) {
+        debugPrint('OfflineService: Went offline during processing, stopping');
+        break;
+      }
+
+      final success = await _processActionWithRetry(action);
+
+      if (success) {
         _actionQueue.removeWhere((a) => a.id == action.id);
         onActionProcessed?.call(action);
         debugPrint('OfflineService: Processed action ${action.id}');
-      } catch (e) {
-        action.incrementRetry();
-        action.errorMessage = e.toString();
-
-        if (action.hasExceededRetries) {
-          _actionQueue.removeWhere((a) => a.id == action.id);
-          onActionFailed?.call(action, 'Max retries exceeded: ${action.errorMessage}');
-          debugPrint('OfflineService: Action ${action.id} failed permanently');
-        } else {
-          debugPrint('OfflineService: Action ${action.id} failed, will retry');
-        }
+      } else if (action.retryCount >= _maxRetryAttempts) {
+        // Move to dead letter queue after max retries exceeded
+        await _moveToDeadLetterQueue(action);
       }
+      // If not successful and retries not exceeded, action stays in queue for next processing cycle
     }
 
     await _saveQueue();
     _isProcessingQueue = false;
+  }
+
+  /// Process a single action with retry logic and exponential backoff
+  Future<bool> _processActionWithRetry(OfflineAction action) async {
+    while (action.retryCount < _maxRetryAttempts) {
+      try {
+        await _processAction(action);
+        return true; // Success
+      } catch (e) {
+        action.incrementRetry();
+        action.errorMessage = e.toString();
+
+        debugPrint(
+          'OfflineService: Action ${action.id} failed (attempt ${action.retryCount}/$_maxRetryAttempts): $e',
+        );
+
+        if (action.retryCount >= _maxRetryAttempts) {
+          // Max retries exceeded
+          onActionFailed?.call(action, 'Max retries exceeded: ${action.errorMessage}');
+          debugPrint('OfflineService: Action ${action.id} failed permanently after $_maxRetryAttempts attempts');
+          return false;
+        }
+
+        // Check if still online before waiting for retry
+        if (!_isOnline) {
+          debugPrint('OfflineService: Went offline, will retry action ${action.id} later');
+          return false;
+        }
+
+        // Apply exponential backoff delay before next retry
+        final delay = _calculateBackoffDelay(action.retryCount - 1);
+        debugPrint('OfflineService: Waiting ${delay.inMilliseconds}ms before retry ${action.retryCount}');
+        await Future.delayed(delay);
+
+        // Check connectivity again after delay
+        if (!_isOnline) {
+          debugPrint('OfflineService: Went offline during backoff, will retry action ${action.id} later');
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Move a failed action to the dead letter queue
+  Future<void> _moveToDeadLetterQueue(OfflineAction action) async {
+    _actionQueue.removeWhere((a) => a.id == action.id);
+    _deadLetterQueue.add(action);
+    await _saveDeadLetterQueue();
+    onActionMovedToDeadLetter?.call(action);
+    debugPrint('OfflineService: Moved action ${action.id} to dead letter queue');
   }
 
   /// Process a single action
@@ -309,6 +434,80 @@ class OfflineService {
       debugPrint('OfflineService: Failed to load queue: $e');
       _actionQueue = [];
     }
+  }
+
+  /// Save dead letter queue to persistent storage
+  Future<void> _saveDeadLetterQueue() async {
+    final jsonList = _deadLetterQueue.map((a) => a.toJson()).toList();
+    await _prefs!.setString(_deadLetterQueueKey, jsonEncode(jsonList));
+  }
+
+  /// Load dead letter queue from persistent storage
+  Future<void> _loadDeadLetterQueue() async {
+    final jsonStr = _prefs!.getString(_deadLetterQueueKey);
+    if (jsonStr == null) {
+      _deadLetterQueue = [];
+      return;
+    }
+
+    try {
+      final List<dynamic> jsonList = jsonDecode(jsonStr);
+      _deadLetterQueue = jsonList
+          .map((json) => OfflineAction.fromJson(json as Map<String, dynamic>))
+          .toList();
+      debugPrint('OfflineService: Loaded ${_deadLetterQueue.length} dead letter queue actions');
+    } catch (e) {
+      debugPrint('OfflineService: Failed to load dead letter queue: $e');
+      _deadLetterQueue = [];
+    }
+  }
+
+  /// Retry an action from the dead letter queue
+  Future<bool> retryDeadLetterAction(String actionId) async {
+    await _ensureInitialized();
+    final actionIndex = _deadLetterQueue.indexWhere((a) => a.id == actionId);
+    if (actionIndex == -1) return false;
+
+    final action = _deadLetterQueue[actionIndex];
+    // Reset retry count to allow fresh retries
+    action.retryCount = 0;
+    action.errorMessage = null;
+
+    // Move back to main queue
+    _deadLetterQueue.removeAt(actionIndex);
+    _actionQueue.add(action);
+
+    await _saveQueue();
+    await _saveDeadLetterQueue();
+
+    debugPrint('OfflineService: Moved action ${action.id} from dead letter queue back to main queue');
+
+    // Try to process immediately if online
+    if (_isOnline) {
+      processQueue();
+    }
+
+    return true;
+  }
+
+  /// Remove an action from the dead letter queue permanently
+  Future<bool> removeDeadLetterAction(String actionId) async {
+    await _ensureInitialized();
+    final initialLength = _deadLetterQueue.length;
+    _deadLetterQueue.removeWhere((a) => a.id == actionId);
+
+    if (_deadLetterQueue.length != initialLength) {
+      await _saveDeadLetterQueue();
+      return true;
+    }
+    return false;
+  }
+
+  /// Clear all actions from the dead letter queue
+  Future<void> clearDeadLetterQueue() async {
+    await _ensureInitialized();
+    _deadLetterQueue.clear();
+    await _saveDeadLetterQueue();
   }
 
   // ========================================================================
