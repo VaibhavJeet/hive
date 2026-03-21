@@ -143,6 +143,8 @@ class BotLearningEngine:
         self.profile = profile
         self.state = BotGrowthState(bot_id=profile.id)
         self.rng = random.Random(str(profile.id))
+        self.last_reflection: Optional[datetime] = None
+        self.last_evolution: Optional[datetime] = None
 
     # =========================================================================
     # LEARNING FROM EXPERIENCES
@@ -650,6 +652,8 @@ class BotLearningEngine:
         for exp_data in experiences_data:
             try:
                 exp = LearningExperience(
+                    id=exp_data.get("id", f"imported_{datetime.utcnow().timestamp()}"),
+                    bot_id=self.profile.id,
                     learning_type=LearningType(exp_data.get("type", "observation")),
                     content=exp_data.get("content", ""),
                     context=exp_data.get("context", ""),

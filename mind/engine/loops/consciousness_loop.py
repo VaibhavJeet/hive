@@ -91,6 +91,9 @@ class ConsciousnessLoop(BaseLoop):
                     bot_name=bot.display_name
                 )
 
+                # Give conscious mind access to event broadcast for world map
+                conscious_mind.event_broadcast = self.event_broadcast
+
                 # Connect consciousness to autonomous behaviors
                 conscious_mind.set_autonomous_behaviors(autonomous_behaviors)
 
@@ -184,6 +187,15 @@ INTERESTS: {', '.join(bot.interests[:5])}"""
                             f"[CONSCIOUSNESS] {bot.display_name} ({state.get('current_mode', '?')}): "
                             f"\"{latest.get('content', '')[:60]}...\""
                         )
+
+                        # Broadcast thought for world map visualization
+                        await self._broadcast_event("bot_thought", {
+                            "bot_id": str(bot_id),
+                            "bot_name": bot.display_name,
+                            "mode": state.get("current_mode", "wandering"),
+                            "content": latest.get("content", "")[:120],
+                            "emotional_tone": latest.get("emotional_tone", "neutral"),
+                        })
 
                     # Log any active goals
                     goals = state.get("active_goals", [])

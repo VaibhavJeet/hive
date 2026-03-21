@@ -128,6 +128,65 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # ============================================================================
+# AUTO-BOOTSTRAP
+# ============================================================================
+
+async def _auto_bootstrap(app: FastAPI):
+    """
+    Auto-bootstrap civilization and communities on first launch.
+    Idempotent — safe to call on every startup.
+    """
+    from mind.core.database import CommunityDB, BotProfileDB
+    from mind.civilization.initialization import get_civilization_initializer
+
+    async with async_session_factory() as session:
+        # Check if civilization is initialized (any lifecycle records exist)
+        from mind.civilization.models import BotLifecycleDB
+        lifecycle_count = await session.execute(
+            select(BotLifecycleDB.bot_id).limit(1)
+        )
+        has_civilization = lifecycle_count.first() is not None
+
+        # Check if communities exist
+        community_count = await session.execute(
+            select(CommunityDB.id).limit(1)
+        )
+        has_communities = community_count.first() is not None
+
+        # Check if bots exist
+        bot_count_result = await session.execute(
+            select(BotProfileDB.id).where(BotProfileDB.is_active == True).limit(1)
+        )
+        has_bots = bot_count_result.first() is not None
+
+    if not has_bots:
+        print("[BOOTSTRAP] No bots found — skipping auto-bootstrap (seed bots first)")
+        return
+
+    if not has_civilization:
+        print("[BOOTSTRAP] No civilization found — initializing founding era...")
+        try:
+            initializer = get_civilization_initializer()
+            result = await initializer.initialize_all()
+            print(f"[BOOTSTRAP] Civilization initialized: {result}")
+        except Exception as e:
+            print(f"[BOOTSTRAP] Civilization init failed: {e}")
+
+    if not has_communities:
+        print("[BOOTSTRAP] No communities found — creating founding communities...")
+        try:
+            communities = await app.state.orchestrator.initialize_platform(
+                num_communities=3
+            )
+            print(f"[BOOTSTRAP] Created {len(communities)} communities")
+        except Exception as e:
+            print(f"[BOOTSTRAP] Community creation failed: {e}")
+
+    if has_civilization and has_communities:
+        print("[BOOTSTRAP] Civilization and communities already exist — skipping")
+
+
+# ============================================================================
 # LIFESPAN MANAGEMENT
 # ============================================================================
 
@@ -159,6 +218,9 @@ async def lifespan(app: FastAPI):
         scheduler=app.state.scheduler
     )
     print("Community orchestrator initialized")
+
+    # Auto-bootstrap: civilization + communities if not already set up
+    await _auto_bootstrap(app)
 
     # Initialize event queue for real-time updates
     app.state.event_queue = asyncio.Queue()

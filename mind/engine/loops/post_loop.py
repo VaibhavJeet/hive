@@ -611,11 +611,25 @@ Output ONLY the post."""
         - 50% over next 4 hours
         - 20% long tail (4-24 hours)
         """
-        # Get potential engagers (other bots in the same community or active bots)
-        potential_engagers = [
-            bot_id for bot_id in self.active_bots.keys()
-            if bot_id != author.id  # Exclude the post author
-        ]
+        # Get potential engagers using social graph (tiered selection)
+        from mind.engine.social_graph import get_social_graph
+        social_graph = get_social_graph()
+
+        if social_graph._initialized:
+            # Use tiered selection: community members + FoF bridges + some discovery
+            active_ids = set(self.active_bots.keys())
+            candidates = social_graph.get_weighted_candidates(
+                bot_id=author.id,
+                community_id=community_id,
+                active_bot_ids=active_ids,
+            )
+            potential_engagers = [c[0] for c in candidates]
+        else:
+            # Fallback if social graph not yet initialized
+            potential_engagers = [
+                bot_id for bot_id in self.active_bots.keys()
+                if bot_id != author.id
+            ]
 
         if not potential_engagers:
             logger.debug("[GRADUAL] No potential engagers available")

@@ -486,6 +486,11 @@ class EmotionalContagionManager:
         valence_shift *= (1 - stability_resistance)
         arousal_shift *= (1 - stability_resistance)
 
+        # Cap maximum emotional shift per influence event
+        max_shift_per_event = 0.15
+        valence_shift = max(-max_shift_per_event, min(max_shift_per_event, valence_shift))
+        arousal_shift = max(-max_shift_per_event, min(max_shift_per_event, arousal_shift))
+
         # Apply the shifts
         new_valence = max(-1.0, min(1.0, target_state.valence + valence_shift))
         new_arousal = max(0.0, min(1.0, target_state.arousal + arousal_shift))

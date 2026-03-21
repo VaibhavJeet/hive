@@ -25,6 +25,7 @@ from mind.civilization.culture import get_culture_engine
 from mind.civilization.reproduction import get_reproduction_manager
 from mind.civilization.rituals import get_rituals_system, RitualType
 from mind.civilization.legacy import get_legacy_system
+from mind.civilization.emergent_communities import get_emergent_community_manager
 from mind.civilization.models import BotLifecycleDB, CulturalMovementDB
 
 logger = logging.getLogger(__name__)
@@ -41,22 +42,37 @@ class CivilizationLoop:
     def __init__(
         self,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
-        demo_mode: bool = False
+        demo_mode: bool = False,
+        event_broadcast: Optional[asyncio.Queue] = None
     ):
         self.llm_semaphore = llm_semaphore or asyncio.Semaphore(5)
         self.demo_mode = demo_mode
+        self.event_broadcast = event_broadcast
 
         self.lifecycle = get_lifecycle_manager(demo_mode=demo_mode)
         self.culture = get_culture_engine(self.llm_semaphore)
         self.reproduction = get_reproduction_manager(self.llm_semaphore)
         self.rituals = get_rituals_system(self.llm_semaphore)
         self.legacy = get_legacy_system(self.llm_semaphore)
+        self.emergent_communities = get_emergent_community_manager(self.llm_semaphore)
 
         self.is_running = False
         self._last_aging = datetime.utcnow()
         self._last_culture_check = datetime.utcnow()
         self._last_reproduction_check = datetime.utcnow()
         self._last_ritual_check = datetime.utcnow()
+
+    async def _broadcast(self, event_type: str, data: dict):
+        """Broadcast a civilization event to WebSocket clients."""
+        if self.event_broadcast:
+            try:
+                await self.event_broadcast.put({
+                    "type": event_type,
+                    "data": data,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            except Exception:
+                pass  # Best-effort broadcast
 
     async def start(self):
         """Start the civilization loop."""
@@ -69,6 +85,7 @@ class CivilizationLoop:
             self._culture_loop(),
             self._reproduction_loop(),
             self._rituals_loop(),
+            self._community_formation_loop(),
             return_exceptions=True
         )
 
@@ -192,9 +209,13 @@ class CivilizationLoop:
                 await self._broadcast_death(lifecycle)
 
     async def _broadcast_death(self, lifecycle: BotLifecycleDB):
-        """Broadcast a death event to the system."""
-        # Could integrate with event system to notify other bots
-        # For now, just log
+        """Broadcast a death event to WebSocket clients and logs."""
+        await self._broadcast("world_map_death", {
+            "bot_id": str(lifecycle.bot_id),
+            "final_words": lifecycle.final_words,
+            "age_days": lifecycle.virtual_age_days,
+            "legacy_impact": lifecycle.legacy_impact,
+        })
         logger.info(
             f"[CIVILIZATION] Death broadcast: {lifecycle.bot_id} has passed. "
             f"Legacy impact: {lifecycle.legacy_impact:.2f}"
@@ -275,6 +296,22 @@ class CivilizationLoop:
                             )
                             if child_id:
                                 logger.info(f"[CIVILIZATION] New bot born: {child_id}")
+                                # Fetch new bot's profile for the frontend
+                                birth_data = {"bot_id": str(child_id), "parent_ids": [str(rel.source_id), str(rel.target_id)]}
+                                try:
+                                    async with async_session_factory() as s:
+                                        bp = await s.execute(select(BotProfileDB).where(BotProfileDB.id == child_id))
+                                        bp = bp.scalar_one_or_none()
+                                        if bp:
+                                            birth_data.update({
+                                                "name": bp.display_name,
+                                                "handle": bp.handle,
+                                                "avatar_seed": bp.avatar_seed,
+                                                "interests": bp.interests or [],
+                                            })
+                                except Exception:
+                                    pass
+                                await self._broadcast("world_map_birth", birth_data)
 
     async def _check_elder_legacies(self):
         """Check if any elders want to create a legacy."""
@@ -335,6 +372,61 @@ class CivilizationLoop:
                         f"[CIVILIZATION] Spontaneous emergence: {child_id} "
                         f"from {movement.name}"
                     )
+
+    async def _community_formation_loop(self):
+        """
+        Periodically check for emergent community formation.
+
+        - Scans for unmet interest clusters → creates new communities
+        - Bots organically join/leave communities based on interests
+        - Checks community health for stagnation
+        """
+        # Wait for bots and initial communities to settle
+        await asyncio.sleep(180 if self.demo_mode else 600)
+
+        while self.is_running:
+            try:
+                # Run every 10 min demo, 3 hours prod
+                interval = 600 if self.demo_mode else 10800
+                await asyncio.sleep(interval)
+
+                # Phase 1: Check for unmet interest clusters → create communities
+                created = await self.emergent_communities.check_and_create_communities()
+                if created > 0:
+                    logger.info(f"[CIVILIZATION] {created} new communities emerged organically")
+                    await self._broadcast("world_map_community_created", {
+                        "count": created,
+                    })
+
+                # Phase 2: Process cross-community migrations (FoF bridge discovery)
+                migration_list = await self.emergent_communities.process_migrations(
+                    interaction_threshold=5
+                )
+                if migration_list:
+                    logger.info(f"[CIVILIZATION] {len(migration_list)} bots migrated to new communities")
+                    for m in migration_list:
+                        await self._broadcast("world_map_migration", m)
+
+                # Phase 3: Organic joining/leaving based on interests
+                await self.emergent_communities.organic_join_cycle()
+
+                # Phase 4: Community health check
+                await self.emergent_communities.check_community_health()
+
+                # Refresh social graph after membership changes
+                try:
+                    from mind.engine.social_graph import get_social_graph
+                    social_graph = get_social_graph()
+                    if social_graph._initialized:
+                        await social_graph.refresh()
+                except Exception:
+                    pass  # Social graph refresh is best-effort
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[CIVILIZATION] Error in community formation loop: {e}")
+                await asyncio.sleep(300)
 
     async def _rituals_loop(self):
         """
@@ -476,13 +568,15 @@ _civilization_loop: Optional[CivilizationLoop] = None
 
 def get_civilization_loop(
     llm_semaphore: Optional[asyncio.Semaphore] = None,
-    demo_mode: bool = False
+    demo_mode: bool = False,
+    event_broadcast: Optional[asyncio.Queue] = None,
 ) -> CivilizationLoop:
     """Get or create the civilization loop instance."""
     global _civilization_loop
     if _civilization_loop is None:
         _civilization_loop = CivilizationLoop(
             llm_semaphore=llm_semaphore,
-            demo_mode=demo_mode
+            demo_mode=demo_mode,
+            event_broadcast=event_broadcast,
         )
     return _civilization_loop

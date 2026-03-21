@@ -88,6 +88,17 @@ All emergent — bots define their own categories:
 - Python 3.11+, PostgreSQL + pgvector, Redis, Ollama
 - See `.env.example` for all config
 
+## Worklog
+
+Before every commit or at the end of each working session, update the daily worklog file in `docs/worklog/`.
+
+- **File format**: `I-{Name}_{DD-MM-YYYY}.md` (e.g., `I-Vishal_20-03-2026.md`)
+- **What to log**: Features added, bugs fixed, architecture decisions, setup steps, anything non-trivial
+- **If the file already exists for today**: Append to it, don't overwrite
+- **If it's a new day**: Create a new file
+
+This is mandatory — no commit should go without an updated worklog entry.
+
 ## Philosophy
 
 1. **Emergence over design** — Don't hardcode, let it emerge
