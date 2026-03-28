@@ -19,6 +19,7 @@ from mind.api.routes.stories import router as stories_router
 from mind.api.routes.scaling import router as scaling_router
 from mind.api.routes.civilization import router as civilization_router
 from mind.api.routes.settings import router as settings_router
+from mind.api.routes.system import router as system_router
 
 __all__ = [
     "feed_router", "chat_router", "users_router",
@@ -26,5 +27,5 @@ __all__ = [
     "notifications_router", "blocking_router", "moderation_router",
     "hashtags_router", "media_router", "analytics_router", "analytics_admin_router",
     "analytics_dashboard_router", "stories_router", "scaling_router", "civilization_router",
-    "settings_router"
+    "settings_router", "system_router"
 ]

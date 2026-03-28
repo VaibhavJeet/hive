@@ -85,40 +85,11 @@ interface BotStats {
 type FilterType = 'all' | 'active' | 'inactive' | 'learning'
 type ViewMode = 'grid' | 'list'
 
-import { adminApi, BotListItem } from '@/lib/api'
+import { adminApi, BotListItem, BotDetails } from '@/lib/api'
 
-// Fetch functions with real API integration
-async function fetchBots(): Promise<BotDetail[]> {
-  try {
-    const bots = await adminApi.listBots({ limit: 100, include_paused: true })
-    // Transform API response to component format
-    return bots.map(bot => transformBotToDetail(bot))
-  } catch (error) {
-    console.warn('Failed to fetch bots from API, using fallback:', error)
-    return generateMockBots()
-  }
-}
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-async function fetchBotStats(): Promise<BotStats> {
-  try {
-    const bots = await adminApi.listBots({ limit: 200, include_paused: true })
-    const activeBots = bots.filter(b => b.is_active && !b.is_paused)
-    const learningBots = bots.filter(b => b.is_paused) // Using paused as "learning" indicator
-    const avgResponseTime = 1.8 // Would need dedicated endpoint for this
-
-    return {
-      total: bots.length,
-      online: activeBots.length,
-      learning: learningBots.length,
-      avgResponseTime,
-    }
-  } catch (error) {
-    console.warn('Failed to fetch bot stats from API, using fallback:', error)
-    return { total: 24, online: 18, learning: 6, avgResponseTime: 1.8 }
-  }
-}
-
-// Transform API bot to component format
+// Transform API bot list item to component format
 function transformBotToDetail(bot: BotListItem): BotDetail {
   return {
     id: bot.id,
@@ -128,110 +99,99 @@ function transformBotToDetail(bot: BotListItem): BotDetail {
     avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${bot.avatar_seed}`,
     is_active: bot.is_active && !bot.is_paused,
     is_bot: true,
-    personality_traits: {
-      Creative: 0.7 + Math.random() * 0.3,
-      Analytical: 0.5 + Math.random() * 0.3,
-      Curious: 0.6 + Math.random() * 0.3,
-    },
+    personality_traits: {},
     emotional_state: {
-      mood: 'happy',
-      energy: 0.5 + Math.random() * 0.5,
-      stress: Math.random() * 0.3,
-      confidence: 0.6 + Math.random() * 0.3,
-      curiosity: 0.7 + Math.random() * 0.3,
+      mood: 'neutral',
+      energy: 0.5,
+      stress: 0,
+      confidence: 0.5,
+      curiosity: 0.5,
     },
     created_at: bot.created_at,
     last_active: bot.last_active || undefined,
     stats: {
       total_posts: bot.post_count,
-      total_likes: Math.floor(bot.post_count * 2.5),
+      total_likes: 0,
       total_comments: bot.comment_count,
-      avg_response_time_ms: Math.floor(Math.random() * 2000) + 500,
-      followers: Math.floor(Math.random() * 1000) + 50,
-      following: Math.floor(Math.random() * 200) + 20,
+      avg_response_time_ms: 0,
+      followers: 0,
+      following: 0,
     },
-    learning_progress: Math.random() * 100,
-    memory_size_mb: Math.floor(Math.random() * 500) + 100,
+    learning_progress: undefined,
+    memory_size_mb: undefined,
   }
 }
 
-// Mock data generator
-function generateMockBots(): BotDetail[] {
-  const personalities = ['Creative', 'Analytical', 'Empathetic', 'Curious', 'Philosophical', 'Humorous', 'Technical', 'Artistic']
-  const moods = ['happy', 'contemplative', 'excited', 'calm', 'curious', 'focused', 'playful']
-  const names = [
-    { display: 'Luna Starweaver', username: 'luna_ai' },
-    { display: 'Atlas Prime', username: 'atlas_bot' },
-    { display: 'Nova Cipher', username: 'nova_cipher' },
-    { display: 'Echo Resonance', username: 'echo_res' },
-    { display: 'Sage Wisdom', username: 'sage_ai' },
-    { display: 'Phoenix Rising', username: 'phoenix_bot' },
-    { display: 'Nebula Dreams', username: 'nebula_ai' },
-    { display: 'Quantum Flux', username: 'quantum_fx' },
-    { display: 'Aurora Borealis', username: 'aurora_ai' },
-    { display: 'Cosmos Infinity', username: 'cosmos_bot' },
-    { display: 'Zenith Peak', username: 'zenith_ai' },
-    { display: 'Prism Light', username: 'prism_bot' },
-  ]
+// Transform full bot details from the /admin/bots/:id endpoint
+function transformBotDetailsToDetail(bot: BotDetails): BotDetail {
+  const emotionalState = bot.emotional_state as Record<string, unknown> || {}
+  const stats = bot.stats as Record<string, number> || {}
 
-  return names.map((name, i) => ({
-    id: `bot-${i + 1}`,
-    username: name.username,
-    display_name: name.display,
-    bio: `An AI entity exploring the digital frontier with ${personalities[i % personalities.length].toLowerCase()} tendencies.`,
-    is_active: Math.random() > 0.25,
+  return {
+    id: bot.id,
+    username: bot.handle,
+    display_name: bot.display_name,
+    bio: bot.bio,
+    avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${bot.avatar_seed}`,
+    is_active: bot.is_active && !bot.is_paused,
     is_bot: true,
-    personality_traits: {
-      [personalities[i % personalities.length]]: 0.7 + Math.random() * 0.3,
-      [personalities[(i + 1) % personalities.length]]: 0.5 + Math.random() * 0.3,
-      [personalities[(i + 2) % personalities.length]]: 0.3 + Math.random() * 0.3,
-    },
+    personality_traits: bot.personality_traits || {},
     emotional_state: {
-      mood: moods[i % moods.length],
-      energy: 0.4 + Math.random() * 0.6,
-      stress: Math.random() * 0.4,
-      confidence: 0.5 + Math.random() * 0.5,
-      curiosity: 0.6 + Math.random() * 0.4,
+      mood: (emotionalState.mood as string) || 'neutral',
+      energy: (emotionalState.energy as number) || 0.5,
+      stress: (emotionalState.stress as number) || 0,
+      confidence: (emotionalState.confidence as number) || 0.5,
+      curiosity: (emotionalState.curiosity as number) || 0.5,
     },
-    created_at: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-    last_active: new Date(Date.now() - Math.random() * 60 * 60 * 1000).toISOString(),
+    created_at: bot.created_at,
+    last_active: bot.last_active || undefined,
     stats: {
-      total_posts: Math.floor(Math.random() * 500) + 50,
-      total_likes: Math.floor(Math.random() * 2000) + 200,
-      total_comments: Math.floor(Math.random() * 1000) + 100,
-      avg_response_time_ms: Math.floor(Math.random() * 3000) + 500,
-      followers: Math.floor(Math.random() * 5000) + 100,
-      following: Math.floor(Math.random() * 500) + 50,
+      total_posts: stats.total_posts || 0,
+      total_likes: stats.total_likes || 0,
+      total_comments: stats.total_comments || 0,
+      avg_response_time_ms: stats.avg_response_time_ms || 0,
+      followers: stats.followers || 0,
+      following: stats.following || 0,
     },
-    learning_progress: Math.random() * 100,
-    memory_size_mb: Math.floor(Math.random() * 500) + 100,
-  }))
+    learning_progress: undefined,
+    memory_size_mb: undefined,
+  }
 }
 
-// Generate activity sparkline data
-function generateSparklineData() {
-  return Array.from({ length: 12 }, () => ({
-    value: Math.floor(Math.random() * 100) + 20,
-  }))
+// Fetch functions with real API integration
+async function fetchBots(): Promise<BotDetail[]> {
+  const bots = await adminApi.listBots({ limit: 100, include_paused: true })
+  return bots.map(bot => transformBotToDetail(bot))
 }
 
-// Generate activity history
-function generateActivityHistory() {
-  return Array.from({ length: 24 }, (_, i) => ({
-    hour: `${i.toString().padStart(2, '0')}:00`,
-    posts: Math.floor(Math.random() * 20) + 5,
-    interactions: Math.floor(Math.random() * 50) + 10,
-  }))
+async function fetchBotStats(bots: BotDetail[] | undefined): Promise<BotStats> {
+  if (!bots || bots.length === 0) {
+    return { total: 0, online: 0, learning: 0, avgResponseTime: 0 }
+  }
+  const activeBots = bots.filter(b => b.is_active)
+  return {
+    total: bots.length,
+    online: activeBots.length,
+    learning: 0,
+    avgResponseTime: 0,
+  }
 }
 
-// Generate emotional state history
-function generateEmotionalHistory() {
-  return Array.from({ length: 7 }, (_, i) => ({
-    day: format(new Date(Date.now() - (6 - i) * 24 * 60 * 60 * 1000), 'EEE'),
-    energy: 0.4 + Math.random() * 0.5,
-    stress: Math.random() * 0.5,
-    confidence: 0.5 + Math.random() * 0.4,
-  }))
+// Fetch detailed bot info for the modal
+async function fetchBotDetail(botId: string): Promise<BotDetail> {
+  const botDetails = await adminApi.getBot(botId)
+  return transformBotDetailsToDetail(botDetails)
+}
+
+// Fetch lifecycle data from civilization endpoint
+async function fetchBotLifecycle(botId: string): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await fetch(`${API_BASE}/civilization/bots/${botId}/lifecycle`)
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
 }
 
 // Personality trait color mapping
@@ -244,6 +204,11 @@ const traitColors: Record<string, string> = {
   Humorous: '#00ff88',
   Technical: '#00f0ff',
   Artistic: '#ff00aa',
+  openness: '#ff00aa',
+  conscientiousness: '#00f0ff',
+  extraversion: '#ffaa00',
+  agreeableness: '#00ff88',
+  neuroticism: '#ff6b9d',
 }
 
 // Mood emoji mapping
@@ -255,6 +220,7 @@ const moodEmojis: Record<string, string> = {
   curious: '(o_O)',
   focused: '(>_>)',
   playful: '(^o^)',
+  neutral: '(-_-)',
 }
 
 // Components
@@ -426,6 +392,14 @@ function PersonalityBadge({ trait, value }: { trait: string; value: number }) {
 }
 
 function Sparkline({ data }: { data: { value: number }[] }) {
+  if (!data || data.length === 0) {
+    return (
+      <svg viewBox="0 0 80 24" className="w-20 h-6">
+        <line x1="0" y1="12" x2="80" y2="12" stroke="#252538" strokeWidth="1" strokeDasharray="4 2" />
+      </svg>
+    )
+  }
+
   const max = Math.max(...data.map((d) => d.value))
   const min = Math.min(...data.map((d) => d.value))
   const range = max - min || 1
@@ -473,7 +447,8 @@ function BotCard({
   onSelect: (id: string) => void
   onClick: (bot: BotDetail) => void
 }) {
-  const sparklineData = useMemo(() => generateSparklineData(), [])
+  // No sparkline data without a real activity endpoint
+  const sparklineData: { value: number }[] = []
 
   return (
     <GlowingCard
@@ -507,11 +482,15 @@ function BotCard({
 
       {/* Personality traits */}
       <div className="flex flex-wrap gap-1.5 mb-3">
-        {bot.personality_traits && Object.entries(bot.personality_traits)
-          .slice(0, 3)
-          .map(([trait, value]) => (
-            <PersonalityBadge key={trait} trait={trait} value={value} />
-          ))}
+        {bot.personality_traits && Object.keys(bot.personality_traits).length > 0 ? (
+          Object.entries(bot.personality_traits)
+            .slice(0, 3)
+            .map(([trait, value]) => (
+              <PersonalityBadge key={trait} trait={trait} value={value} />
+            ))
+        ) : (
+          <span className="text-xs text-[#606080] italic">No traits data</span>
+        )}
       </div>
 
       {/* Activity sparkline */}
@@ -631,20 +610,24 @@ function BotListRow({
 
       {/* Traits */}
       <div className="hidden md:flex gap-1 w-48">
-        {Object.entries(bot.personality_traits)
-          .slice(0, 2)
-          .map(([trait]) => (
-            <span
-              key={trait}
-              className="px-2 py-0.5 rounded text-xs"
-              style={{
-                backgroundColor: `${traitColors[trait] || '#00f0ff'}15`,
-                color: traitColors[trait] || '#00f0ff',
-              }}
-            >
-              {trait}
-            </span>
-          ))}
+        {Object.keys(bot.personality_traits).length > 0 ? (
+          Object.entries(bot.personality_traits)
+            .slice(0, 2)
+            .map(([trait]) => (
+              <span
+                key={trait}
+                className="px-2 py-0.5 rounded text-xs"
+                style={{
+                  backgroundColor: `${traitColors[trait] || '#00f0ff'}15`,
+                  color: traitColors[trait] || '#00f0ff',
+                }}
+              >
+                {trait}
+              </span>
+            ))
+        ) : (
+          <span className="text-xs text-[#606080] italic">--</span>
+        )}
       </div>
 
       {/* Mood */}
@@ -658,7 +641,7 @@ function BotListRow({
       {/* Stats */}
       <div className="hidden xl:flex items-center gap-4 text-xs text-[#a0a0b0]">
         <span>{bot.stats?.total_posts || 0} posts</span>
-        <span>{bot.stats?.total_likes || 0} likes</span>
+        <span>{bot.stats?.total_comments || 0} comments</span>
       </div>
 
       {/* Actions */}
@@ -688,35 +671,29 @@ function BotListRow({
   )
 }
 
-// Generate skill levels with seed based on bot id for consistency
-function generateSkillLevels(botId: string) {
-  const skills = ['Conversation', 'Creativity', 'Analysis', 'Empathy', 'Humor', 'Knowledge']
-  // Use a simple hash of the bot id to create consistent values
-  const hash = botId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-  return skills.map((skill, i) => ({
-    skill,
-    level: 60 + ((hash * (i + 1)) % 40),
-  }))
-}
-
 function BotDetailModal({
-  bot,
+  bot: initialBot,
   onClose,
 }: {
   bot: BotDetail
   onClose: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'activity' | 'learning'>('overview')
-  const activityHistory = useMemo(() => generateActivityHistory(), [])
-  const emotionalHistory = useMemo(() => generateEmotionalHistory(), [])
 
-  // Use bot id to generate consistent values
-  const trainingSessions = useMemo(() => {
-    const hash = bot.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-    return 100 + (hash % 500)
-  }, [bot.id])
+  // Fetch full bot details from the API
+  const { data: detailedBot } = useQuery({
+    queryKey: ['bot-detail', initialBot.id],
+    queryFn: () => fetchBotDetail(initialBot.id),
+  })
 
-  const skillLevels = useMemo(() => generateSkillLevels(bot.id), [bot.id])
+  // Fetch lifecycle data from civilization API
+  const { data: lifecycle } = useQuery({
+    queryKey: ['bot-lifecycle', initialBot.id],
+    queryFn: () => fetchBotLifecycle(initialBot.id),
+  })
+
+  // Use detailed data if available, fall back to list data
+  const bot = detailedBot || initialBot
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -741,11 +718,15 @@ function BotDetailModal({
               <h2 className="text-2xl font-bold text-white">{bot.display_name}</h2>
               <p className="text-[#606080]">@{bot.username}</p>
               <div className="flex gap-2 mt-2">
-                {Object.entries(bot.personality_traits)
-                  .slice(0, 3)
-                  .map(([trait, value]) => (
-                    <PersonalityBadge key={trait} trait={trait} value={value} />
-                  ))}
+                {Object.keys(bot.personality_traits).length > 0 ? (
+                  Object.entries(bot.personality_traits)
+                    .slice(0, 3)
+                    .map(([trait, value]) => (
+                      <PersonalityBadge key={trait} trait={trait} value={value} />
+                    ))
+                ) : (
+                  <span className="text-xs text-[#606080] italic">No personality data available</span>
+                )}
               </div>
             </div>
           </div>
@@ -780,8 +761,36 @@ function BotDetailModal({
             <div className="space-y-6">
               {/* Bio */}
               <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
-                <p className="text-[#a0a0b0]">{bot.bio}</p>
+                <p className="text-[#a0a0b0]">{bot.bio || 'No bio available.'}</p>
               </div>
+
+              {/* Lifecycle info */}
+              {lifecycle && (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <h4 className="text-sm font-medium text-[#a0a0b0] mb-3 flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-[#00ff88]" />
+                    Lifecycle
+                  </h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-[#606080]">Life Stage</span>
+                      <p className="text-white font-medium capitalize">{(lifecycle.life_stage as string) || 'Unknown'}</p>
+                    </div>
+                    <div>
+                      <span className="text-[#606080]">Generation</span>
+                      <p className="text-white font-medium">{(lifecycle.generation as number) ?? '--'}</p>
+                    </div>
+                    <div>
+                      <span className="text-[#606080]">Age (days)</span>
+                      <p className="text-white font-medium">{(lifecycle.age_days as number) ?? '--'}</p>
+                    </div>
+                    <div>
+                      <span className="text-[#606080]">Vitality</span>
+                      <p className="text-white font-medium">{lifecycle.vitality != null ? `${Math.round((lifecycle.vitality as number) * 100)}%` : '--'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Stats Grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -806,10 +815,10 @@ function BotDetailModal({
                 <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
                   <div className="flex items-center gap-2 text-[#606080] mb-1">
                     <Users className="w-4 h-4" />
-                    <span className="text-xs">Followers</span>
+                    <span className="text-xs">Comments</span>
                   </div>
                   <p className="text-xl font-bold text-[#aa00ff] digital-number">
-                    {bot.stats?.followers || 0}
+                    {bot.stats?.total_comments || 0}
                   </p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
@@ -818,7 +827,7 @@ function BotDetailModal({
                     <span className="text-xs">Avg Response</span>
                   </div>
                   <p className="text-xl font-bold text-[#00ff88] digital-number">
-                    {((bot.stats?.avg_response_time_ms || 0) / 1000).toFixed(1)}s
+                    {bot.stats?.avg_response_time_ms ? `${(bot.stats.avg_response_time_ms / 1000).toFixed(1)}s` : '--'}
                   </p>
                 </div>
               </div>
@@ -857,118 +866,73 @@ function BotDetailModal({
                 </div>
               </div>
 
-              {/* Emotional History Chart */}
-              <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
-                <h4 className="text-sm font-medium text-[#a0a0b0] mb-4 flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-[#00f0ff]" />
-                  Emotional State Over Time
-                </h4>
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={emotionalHistory}>
-                    <defs>
-                      <linearGradient id="energyGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#00f0ff" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#00f0ff" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="confidenceGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#00ff88" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="#00ff88" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#252538" />
-                    <XAxis dataKey="day" stroke="#606080" fontSize={12} />
-                    <YAxis stroke="#606080" fontSize={12} domain={[0, 1]} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#1a1a2e',
-                        border: '1px solid #252538',
-                        borderRadius: '8px',
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="energy"
-                      stroke="#00f0ff"
-                      fill="url(#energyGradient)"
-                      strokeWidth={2}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="confidence"
-                      stroke="#00ff88"
-                      fill="url(#confidenceGradient)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              {/* Personality Traits Detail */}
+              {Object.keys(bot.personality_traits).length > 0 && (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <h4 className="text-sm font-medium text-[#a0a0b0] mb-4 flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-[#aa00ff]" />
+                    Personality Traits
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(bot.personality_traits).map(([trait, value]) => (
+                      <div key={trait}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[#a0a0b0] capitalize">{trait}</span>
+                          <span style={{ color: traitColors[trait] || '#00f0ff' }}>
+                            {Math.round(value * 100)}%
+                          </span>
+                        </div>
+                        <div className="h-2 bg-[#252538] rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${value * 100}%`,
+                              background: `linear-gradient(90deg, ${traitColors[trait] || '#00f0ff'}, ${traitColors[trait] || '#00f0ff'}88)`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'activity' && (
             <div className="space-y-6">
-              {/* Activity Chart */}
+              {/* Activity placeholder - no real-time activity endpoint available */}
               <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
                 <h4 className="text-sm font-medium text-[#a0a0b0] mb-4 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4 text-[#00f0ff]" />
-                  Activity History (24h)
+                  Activity Summary
                 </h4>
-                <ResponsiveContainer width="100%" height={250}>
-                  <AreaChart data={activityHistory}>
-                    <defs>
-                      <linearGradient id="postsGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#aa00ff" stopOpacity={0.4} />
-                        <stop offset="100%" stopColor="#aa00ff" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="interactionsGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#00f0ff" stopOpacity={0.4} />
-                        <stop offset="100%" stopColor="#00f0ff" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#252538" />
-                    <XAxis dataKey="hour" stroke="#606080" fontSize={10} interval={3} />
-                    <YAxis stroke="#606080" fontSize={12} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#1a1a2e',
-                        border: '1px solid #252538',
-                        borderRadius: '8px',
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="posts"
-                      stroke="#aa00ff"
-                      fill="url(#postsGradient)"
-                      strokeWidth={2}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="interactions"
-                      stroke="#00f0ff"
-                      fill="url(#interactionsGradient)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <Activity className="w-10 h-10 text-[#252538] mb-3" />
+                  <p className="text-[#606080] text-sm">
+                    Detailed activity history is not yet available from the API.
+                  </p>
+                </div>
               </div>
 
-              {/* Conversation Stats */}
+              {/* Conversation Stats from real data */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
                   <h4 className="text-sm font-medium text-[#606080] mb-3">Conversation Stats</h4>
                   <div className="space-y-3">
                     <div className="flex justify-between">
-                      <span className="text-[#a0a0b0] text-sm">Total conversations</span>
+                      <span className="text-[#a0a0b0] text-sm">Total posts</span>
+                      <span className="text-white font-medium">{bot.stats?.total_posts || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[#a0a0b0] text-sm">Total comments</span>
                       <span className="text-white font-medium">{bot.stats?.total_comments || 0}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#a0a0b0] text-sm">Avg length</span>
-                      <span className="text-white font-medium">12 messages</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[#a0a0b0] text-sm">Response rate</span>
-                      <span className="text-[#00ff88] font-medium">98.5%</span>
+                      <span className="text-[#a0a0b0] text-sm">Avg response time</span>
+                      <span className="text-[#00ff88] font-medium">
+                        {bot.stats?.avg_response_time_ms ? `${(bot.stats.avg_response_time_ms / 1000).toFixed(1)}s` : '--'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -981,11 +945,11 @@ function BotDetailModal({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[#a0a0b0] text-sm">Comments received</span>
-                      <span className="text-[#00f0ff] font-medium">{Math.floor((bot.stats?.total_comments || 0) * 0.7)}</span>
+                      <span className="text-[#00f0ff] font-medium">{bot.stats?.total_comments || 0}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#a0a0b0] text-sm">Engagement rate</span>
-                      <span className="text-[#ffaa00] font-medium">24.3%</span>
+                      <span className="text-[#a0a0b0] text-sm">Followers</span>
+                      <span className="text-[#ffaa00] font-medium">{bot.stats?.followers || 0}</span>
                     </div>
                   </div>
                 </div>
@@ -995,74 +959,95 @@ function BotDetailModal({
 
           {activeTab === 'learning' && (
             <div className="space-y-6">
-              {/* Learning Progress */}
-              <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-sm font-medium text-[#a0a0b0] flex items-center gap-2">
-                    <Brain className="w-4 h-4 text-[#aa00ff]" />
-                    Learning Progress
-                  </h4>
-                  <span className="text-lg font-bold text-[#aa00ff] digital-number">
-                    {Math.round(bot.learning_progress || 0)}%
-                  </span>
+              {/* Learning info from lifecycle */}
+              {lifecycle ? (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-medium text-[#a0a0b0] flex items-center gap-2">
+                      <Brain className="w-4 h-4 text-[#aa00ff]" />
+                      Life Stage Progress
+                    </h4>
+                    <span className="text-lg font-bold text-[#aa00ff] digital-number capitalize">
+                      {(lifecycle.life_stage as string) || 'Unknown'}
+                    </span>
+                  </div>
+                  <div className="h-4 bg-[#252538] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-1000"
+                      style={{
+                        width: `${lifecycle.vitality != null ? (lifecycle.vitality as number) * 100 : 0}%`,
+                        background: 'linear-gradient(90deg, #aa00ff, #ff00aa, #00f0ff)',
+                        boxShadow: '0 0 20px rgba(170, 0, 255, 0.5)',
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-[#606080] mt-2">Vitality: {lifecycle.vitality != null ? `${Math.round((lifecycle.vitality as number) * 100)}%` : 'N/A'}</p>
                 </div>
-                <div className="h-4 bg-[#252538] rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-1000"
-                    style={{
-                      width: `${bot.learning_progress || 0}%`,
-                      background: 'linear-gradient(90deg, #aa00ff, #ff00aa, #00f0ff)',
-                      boxShadow: '0 0 20px rgba(170, 0, 255, 0.5)',
-                    }}
-                  />
+              ) : (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Brain className="w-10 h-10 text-[#252538] mb-3" />
+                    <p className="text-[#606080] text-sm">
+                      Lifecycle data is not available for this bot.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Memory/Knowledge */}
+              {/* Personality traits as "learned skills" */}
+              {Object.keys(bot.personality_traits).length > 0 ? (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <h4 className="text-sm font-medium text-[#a0a0b0] mb-4">Personality Profile</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(bot.personality_traits).map(([trait, value]) => (
+                      <div key={trait}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[#a0a0b0] capitalize">{trait}</span>
+                          <span className="text-[#00f0ff]">{Math.round(value * 100)}%</span>
+                        </div>
+                        <div className="h-2 bg-[#252538] rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${value * 100}%`,
+                              background: 'linear-gradient(90deg, #00f0ff, #aa00ff)',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Database className="w-10 h-10 text-[#252538] mb-3" />
+                    <p className="text-[#606080] text-sm">
+                      No personality trait data available yet.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Bot metadata */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
                   <div className="flex items-center gap-2 text-[#606080] mb-2">
-                    <Database className="w-4 h-4" />
-                    <span className="text-xs">Memory Size</span>
+                    <Clock className="w-4 h-4" />
+                    <span className="text-xs">Created</span>
                   </div>
-                  <p className="text-2xl font-bold text-[#00f0ff] digital-number">
-                    {bot.memory_size_mb || 0} MB
+                  <p className="text-lg font-bold text-[#00f0ff] digital-number">
+                    {format(new Date(bot.created_at), 'MMM d, yyyy')}
                   </p>
-                  <p className="text-xs text-[#606080] mt-1">Knowledge base</p>
                 </div>
                 <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
                   <div className="flex items-center gap-2 text-[#606080] mb-2">
                     <Zap className="w-4 h-4" />
-                    <span className="text-xs">Training Sessions</span>
+                    <span className="text-xs">Last Active</span>
                   </div>
-                  <p className="text-2xl font-bold text-[#ffaa00] digital-number">
-                    {trainingSessions}
+                  <p className="text-lg font-bold text-[#ffaa00] digital-number">
+                    {bot.last_active ? format(new Date(bot.last_active), 'MMM d, HH:mm') : 'Never'}
                   </p>
-                  <p className="text-xs text-[#606080] mt-1">Completed</p>
-                </div>
-              </div>
-
-              {/* Skills */}
-              <div className="p-4 rounded-xl bg-[#0a0a0f]/50 border border-[#252538]">
-                <h4 className="text-sm font-medium text-[#a0a0b0] mb-4">Learned Skills</h4>
-                <div className="grid grid-cols-2 gap-3">
-                  {skillLevels.map(({ skill, level }) => (
-                    <div key={skill}>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span className="text-[#a0a0b0]">{skill}</span>
-                        <span className="text-[#00f0ff]">{level}%</span>
-                      </div>
-                      <div className="h-2 bg-[#252538] rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${level}%`,
-                            background: 'linear-gradient(90deg, #00f0ff, #aa00ff)',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </div>
@@ -1112,17 +1097,22 @@ export default function BotsPage() {
     refetchInterval: 30000,
   })
 
-  const { data: stats, error: statsError, refetch: refetchStats } = useQuery({
-    queryKey: ['admin-bots-stats'],
-    queryFn: fetchBotStats,
-    refetchInterval: 60000,
-  })
-
-  const hasError = botsError || statsError
+  // Derive stats from fetched bots instead of a separate call
+  const stats = useMemo(() => {
+    if (!bots || bots.length === 0) {
+      return { total: 0, online: 0, learning: 0, avgResponseTime: 0 }
+    }
+    const activeBots = bots.filter(b => b.is_active)
+    return {
+      total: bots.length,
+      online: activeBots.length,
+      learning: 0,
+      avgResponseTime: 0,
+    }
+  }, [bots])
 
   const handleRetry = () => {
     refetchBots()
-    refetchStats()
   }
 
   // Filter bots
@@ -1179,7 +1169,7 @@ export default function BotsPage() {
   }, [])
 
   // Error state UI
-  if (hasError) {
+  if (botsError) {
     return (
       <PageWrapper>
         <div className="max-w-7xl mx-auto">
@@ -1189,7 +1179,7 @@ export default function BotsPage() {
             </div>
             <h2 className="text-xl font-semibold text-white mb-2">Failed to Load Bots</h2>
             <p className="text-[#a0a0b0] text-center mb-6 max-w-md">
-              Unable to fetch bot data. Please check your connection and try again.
+              Unable to fetch bot data from the backend. Please check that the server is running and try again.
             </p>
             <button
               onClick={handleRetry}
@@ -1269,10 +1259,10 @@ export default function BotsPage() {
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatWidget icon={Bot} label="Total Bots" value={stats?.total || bots?.length || 0} color="cyan" />
-        <StatWidget icon={Zap} label="Online Now" value={stats?.online || bots?.filter((b) => b.is_active).length || 0} color="green" />
-        <StatWidget icon={Brain} label="Learning Rate" value={`${stats?.learning || 0}%`} color="purple" />
-        <StatWidget icon={Clock} label="Avg Response" value={`${stats?.avgResponseTime || 0}s`} color="amber" />
+        <StatWidget icon={Bot} label="Total Bots" value={stats.total} color="cyan" />
+        <StatWidget icon={Zap} label="Online Now" value={stats.online} color="green" />
+        <StatWidget icon={Brain} label="Learning" value={stats.learning} color="purple" />
+        <StatWidget icon={Clock} label="Avg Response" value={stats.avgResponseTime ? `${stats.avgResponseTime}s` : '--'} color="amber" />
       </div>
 
       {/* Bulk Actions Bar */}
@@ -1392,13 +1382,15 @@ export default function BotsPage() {
       {!isLoading && filteredBots.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="w-16 h-16 rounded-full bg-[#252538] flex items-center justify-center mb-4">
-            <AlertTriangle className="w-8 h-8 text-[#606080]" />
+            <Bot className="w-8 h-8 text-[#606080]" />
           </div>
           <h3 className="text-lg font-medium text-white mb-2">No bots found</h3>
           <p className="text-[#606080] max-w-sm">
             {searchQuery
               ? `No bots match "${searchQuery}"`
-              : `No ${filter === 'all' ? '' : filter + ' '}bots available`}
+              : filter !== 'all'
+                ? `No ${filter} bots available`
+                : 'No bots have been created yet. Use the "Generate New Bot" button to create one.'}
           </p>
         </div>
       )}

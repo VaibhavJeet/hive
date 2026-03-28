@@ -35,7 +35,7 @@ import {
 import { formatDistanceToNow, format, subDays } from 'date-fns'
 import { GlowCard } from '@/components/ui/GlowCard'
 import { NeonButton } from '@/components/ui/NeonButton'
-import { adminApi, PostListItem } from '@/lib/api'
+import { adminApi, API_BASE_URL, PostListItem } from '@/lib/api'
 import { PageWrapper } from '@/components/PageWrapper'
 import { PostRowSkeleton } from '@/components/ui/Skeleton'
 
@@ -79,120 +79,6 @@ interface Comment {
   likes: number
 }
 
-// Mock data generators
-function generateMockPosts(): Post[] {
-  const communities = ['Tech Enthusiasts', 'Gaming Zone', 'Art & Design', 'Music Lovers', 'Science Hub', 'Sports Talk']
-  const statuses: Post['status'][] = ['active', 'active', 'active', 'active', 'flagged', 'removed', 'pending']
-  const contentSamples = [
-    'Just discovered an amazing new framework for building AI applications! The possibilities are endless.',
-    'Check out this incredible artwork I created using neural style transfer. What do you think?',
-    'Hot take: The future of social media lies in decentralized platforms. Here\'s why...',
-    'Breaking down the latest developments in quantum computing - thread below',
-    'Anyone else excited about the upcoming tech conference? Let me know if you\'re attending!',
-    'Just finished building my first autonomous bot. It can now generate content and engage with users.',
-    'The intersection of art and technology has never been more exciting. New project reveal soon!',
-    'Data analysis shows interesting patterns in user engagement. Full report coming soon.',
-    'Exploring the ethical implications of AI-generated content in modern social platforms.',
-    'New update: Improved response times and better content recommendations for all users.',
-  ]
-
-  return Array.from({ length: 50 }, (_, i) => {
-    const isBot = i % 4 === 0
-    const hasMedia = Math.random() > 0.6
-    return {
-      id: `PST-${String(1000 + i).padStart(6, '0')}`,
-      author_id: isBot ? `BOT-${100 + i}` : `USR-${1000 + i}`,
-      author_name: isBot ? `Bot_${100 + (i % 20)}` : `User_${1000 + (i % 30)}`,
-      author_username: isBot ? `bot_${100 + (i % 20)}` : `user_${1000 + (i % 30)}`,
-      author_avatar: `https://api.dicebear.com/7.x/${isBot ? 'bottts' : 'avataaars'}/svg?seed=${i}`,
-      author_type: isBot ? 'bot' : 'user',
-      author_verified: Math.random() > 0.7,
-      content: contentSamples[i % contentSamples.length],
-      media_attachments: hasMedia ? [
-        { type: Math.random() > 0.5 ? 'image' : 'video' as const, url: `https://picsum.photos/seed/${i}/800/600`, thumbnail: `https://picsum.photos/seed/${i}/200/150` },
-      ] : [],
-      community_id: `COM-${100 + (i % communities.length)}`,
-      community_name: communities[i % communities.length],
-      likes_count: Math.floor(Math.random() * 5000),
-      comments_count: Math.floor(Math.random() * 500),
-      shares_count: Math.floor(Math.random() * 200),
-      views_count: Math.floor(Math.random() * 50000),
-      created_at: new Date(Date.now() - Math.random() * 14 * 24 * 60 * 60 * 1000).toISOString(),
-      status: statuses[Math.floor(Math.random() * statuses.length)],
-      is_trending: Math.random() > 0.85,
-      engagement_rate: Math.random() * 15,
-      moderation_history: Math.random() > 0.7 ? [
-        {
-          action: ['reviewed', 'flagged', 'approved', 'warning_issued'][Math.floor(Math.random() * 4)],
-          moderator: `Moderator_${Math.floor(Math.random() * 10)}`,
-          timestamp: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
-          reason: Math.random() > 0.5 ? 'Content review required' : undefined,
-        }
-      ] : [],
-    }
-  })
-}
-
-function generateMockStats(): PostStats {
-  return {
-    total_posts: Math.floor(Math.random() * 50000) + 100000,
-    posts_today: Math.floor(Math.random() * 2000) + 500,
-    avg_engagement: Math.floor(Math.random() * 10) + 3,
-    flagged_content: Math.floor(Math.random() * 100) + 20,
-  }
-}
-
-// Total number of mock comments for pagination demo
-const TOTAL_MOCK_COMMENTS = 25
-
-function generateMockComments(offset: number = 0, limit: number = COMMENTS_PER_PAGE): { comments: Comment[], hasMore: boolean, total: number } {
-  const commentTexts = [
-    'Great post! Really insightful.',
-    'I disagree with this take, but interesting perspective.',
-    'Can you share more details about this?',
-    'This is exactly what I was looking for!',
-    'Bookmarked for later reference.',
-    'The community needs more content like this.',
-    'Interesting point, but have you considered...',
-    'This changed my perspective completely.',
-    'I learned something new today!',
-    'This deserves more attention.',
-    'Can someone explain this further?',
-    'Amazing contribution to the discussion.',
-    'Not sure I agree, but well written.',
-    'Following this thread for updates.',
-    'This is why I love this community.',
-    'Quality content right here.',
-    'Has anyone tried this approach?',
-    'Would love to see a follow-up on this.',
-    'Mind = blown. Thanks for sharing!',
-    'Saving this for later reference.',
-    'The detail here is impressive.',
-    'Great analysis, very thorough.',
-    'This needs to be shared more widely.',
-    'Excellent points all around.',
-    'Looking forward to more posts like this.',
-  ]
-
-  const comments = Array.from({ length: Math.min(limit, TOTAL_MOCK_COMMENTS - offset) }, (_, i) => {
-    const idx = offset + i
-    return {
-      id: `CMT-${1000 + idx}`,
-      author_name: `Commenter_${idx + 1}`,
-      author_avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=comment${idx}`,
-      content: commentTexts[idx % commentTexts.length],
-      timestamp: new Date(Date.now() - (idx + 1) * 2 * 60 * 60 * 1000).toISOString(),
-      likes: Math.floor(Math.random() * 100),
-    }
-  })
-
-  return {
-    comments,
-    hasMore: offset + limit < TOTAL_MOCK_COMMENTS,
-    total: TOTAL_MOCK_COMMENTS,
-  }
-}
-
 // Transform API response to match component's Post type
 function transformApiPost(apiPost: PostListItem): Post {
   return {
@@ -233,47 +119,47 @@ async function fetchPostsPage({ pageParam = 0 }: PostsPageParams): Promise<{
   nextOffset: number | null
   hasMore: boolean
 }> {
-  try {
-    const apiPosts = await adminApi.listPosts({
-      limit: POSTS_PER_PAGE,
-      offset: pageParam,
-      include_deleted: true
-    })
-    if (apiPosts?.length) {
-      const posts = apiPosts.map(transformApiPost)
-      return {
-        posts,
-        nextOffset: posts.length === POSTS_PER_PAGE ? pageParam + POSTS_PER_PAGE : null,
-        hasMore: posts.length === POSTS_PER_PAGE,
-      }
-    }
-    // Fall back to mock data for demo
-    const mockPosts = generateMockPosts()
-    const paginatedMock = mockPosts.slice(pageParam, pageParam + POSTS_PER_PAGE)
-    return {
-      posts: paginatedMock,
-      nextOffset: pageParam + POSTS_PER_PAGE < mockPosts.length ? pageParam + POSTS_PER_PAGE : null,
-      hasMore: pageParam + POSTS_PER_PAGE < mockPosts.length,
-    }
-  } catch (error) {
-    console.error('Failed to fetch posts from API:', error)
-    const mockPosts = generateMockPosts()
-    const paginatedMock = mockPosts.slice(pageParam, pageParam + POSTS_PER_PAGE)
-    return {
-      posts: paginatedMock,
-      nextOffset: pageParam + POSTS_PER_PAGE < mockPosts.length ? pageParam + POSTS_PER_PAGE : null,
-      hasMore: pageParam + POSTS_PER_PAGE < mockPosts.length,
-    }
+  const apiPosts = await adminApi.listPosts({
+    limit: POSTS_PER_PAGE,
+    offset: pageParam,
+    include_deleted: true
+  })
+  const posts = (apiPosts ?? []).map(transformApiPost)
+  return {
+    posts,
+    nextOffset: posts.length === POSTS_PER_PAGE ? pageParam + POSTS_PER_PAGE : null,
+    hasMore: posts.length === POSTS_PER_PAGE,
   }
 }
 
 async function fetchStats(): Promise<PostStats> {
-  try {
-    const res = await fetch('/api/admin/posts/stats')
-    if (!res.ok) throw new Error('Failed to fetch')
-    return res.json()
-  } catch {
-    return generateMockStats()
+  const stats = await adminApi.getStats()
+  return {
+    total_posts: stats.total_posts ?? 0,
+    posts_today: stats.posts_24h ?? 0,
+    avg_engagement: stats.total_posts > 0 ? Math.round((stats.total_messages / Math.max(stats.total_posts, 1)) * 100) / 100 : 0,
+    flagged_content: 0,
+  }
+}
+
+async function fetchCommentsForPost(postId: string, offset: number, limit: number): Promise<{ comments: Comment[], hasMore: boolean, total: number }> {
+  const res = await fetch(`${API_BASE_URL}/feed/posts/${postId}/comments?limit=${limit}&offset=${offset}`)
+  if (!res.ok) {
+    throw new Error(`Failed to fetch comments: ${res.status}`)
+  }
+  const data = await res.json()
+  const comments: Comment[] = (data ?? []).map((c: { id: string; author: { display_name: string; avatar_seed: string }; content: string; created_at: string; like_count: number }) => ({
+    id: c.id,
+    author_name: c.author?.display_name ?? 'Unknown',
+    author_avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${c.author?.avatar_seed ?? c.id}`,
+    content: c.content,
+    timestamp: c.created_at,
+    likes: c.like_count ?? 0,
+  }))
+  return {
+    comments,
+    hasMore: comments.length === limit,
+    total: comments.length + offset + (comments.length === limit ? 1 : 0), // Approximate total
   }
 }
 
@@ -386,31 +272,52 @@ function PostDetailModal({
   const [hasMoreComments, setHasMoreComments] = useState(true)
   const [isLoadingComments, setIsLoadingComments] = useState(false)
   const [totalComments, setTotalComments] = useState(0)
+  const [commentsError, setCommentsError] = useState(false)
 
-  // Load initial comments
+  // Load initial comments from API
   useEffect(() => {
-    const { comments, hasMore, total } = generateMockComments(0, COMMENTS_PER_PAGE)
-    setAllComments(comments)
-    setHasMoreComments(hasMore)
-    setTotalComments(total)
-    setCommentsOffset(COMMENTS_PER_PAGE)
-  }, [])
+    let cancelled = false
+    setIsLoadingComments(true)
+    setCommentsError(false)
+    fetchCommentsForPost(post.id, 0, COMMENTS_PER_PAGE)
+      .then(({ comments, hasMore, total }) => {
+        if (cancelled) return
+        setAllComments(comments)
+        setHasMoreComments(hasMore)
+        setTotalComments(total)
+        setCommentsOffset(COMMENTS_PER_PAGE)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAllComments([])
+        setHasMoreComments(false)
+        setTotalComments(0)
+        setCommentsError(true)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingComments(false)
+      })
+    return () => { cancelled = true }
+  }, [post.id])
 
   const loadMoreComments = useCallback(() => {
     setIsLoadingComments(true)
-    // Simulate async loading
-    setTimeout(() => {
-      const { comments, hasMore } = generateMockComments(commentsOffset, COMMENTS_PER_PAGE)
-      setAllComments(prev => [...prev, ...comments])
-      setHasMoreComments(hasMore)
-      setCommentsOffset(prev => prev + COMMENTS_PER_PAGE)
-      setIsLoadingComments(false)
-    }, 300)
-  }, [commentsOffset])
+    fetchCommentsForPost(post.id, commentsOffset, COMMENTS_PER_PAGE)
+      .then(({ comments, hasMore }) => {
+        setAllComments(prev => [...prev, ...comments])
+        setHasMoreComments(hasMore)
+        setCommentsOffset(prev => prev + COMMENTS_PER_PAGE)
+      })
+      .catch(() => {
+        setHasMoreComments(false)
+      })
+      .finally(() => {
+        setIsLoadingComments(false)
+      })
+  }, [post.id, commentsOffset])
 
-  // Mock engagement data - deterministic based on post data
+  // Engagement data - deterministic based on post data
   const engagementData = useMemo(() => {
-    // Create deterministic values from post data
     const seed = post.likes_count + post.comments_count
     const hourly = Array.from({ length: 24 }, (_, i) => {
       return Math.floor(((seed * (i + 1)) % 100))
@@ -662,51 +569,65 @@ function PostDetailModal({
                     Comments ({totalComments})
                   </h3>
                   <div className="space-y-3 max-h-96 overflow-y-auto">
-                    {allComments.map((comment) => (
-                      <div
-                        key={comment.id}
-                        className="p-3 rounded-lg bg-[#12121a] border border-[#252538]"
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={comment.author_avatar}
-                              alt={comment.author_name}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-medium text-[#e0e0e0]">{comment.author_name}</p>
-                              <span className="text-[10px] text-[#606080] font-mono">
-                                {formatDistanceToNow(new Date(comment.timestamp), { addSuffix: true })}
-                              </span>
+                    {isLoadingComments && allComments.length === 0 ? (
+                      <p className="text-center text-[#606080] text-sm font-mono py-4">Loading comments...</p>
+                    ) : commentsError ? (
+                      <p className="text-center text-[#606080] text-sm font-mono py-8">
+                        No data available
+                      </p>
+                    ) : allComments.length === 0 ? (
+                      <p className="text-center text-[#606080] text-sm font-mono py-8">
+                        No comments yet
+                      </p>
+                    ) : (
+                      <>
+                        {allComments.map((comment) => (
+                          <div
+                            key={comment.id}
+                            className="p-3 rounded-lg bg-[#12121a] border border-[#252538]"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={comment.author_avatar}
+                                  alt={comment.author_name}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-sm font-medium text-[#e0e0e0]">{comment.author_name}</p>
+                                  <span className="text-[10px] text-[#606080] font-mono">
+                                    {formatDistanceToNow(new Date(comment.timestamp), { addSuffix: true })}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-[#a0a0b0] mt-1">{comment.content}</p>
+                                <div className="flex items-center gap-2 mt-2">
+                                  <Heart className="w-3 h-3 text-[#606080]" />
+                                  <span className="text-xs text-[#606080]">{comment.likes}</span>
+                                </div>
+                              </div>
                             </div>
-                            <p className="text-sm text-[#a0a0b0] mt-1">{comment.content}</p>
-                            <div className="flex items-center gap-2 mt-2">
-                              <Heart className="w-3 h-3 text-[#606080]" />
-                              <span className="text-xs text-[#606080]">{comment.likes}</span>
-                            </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
-                    {hasMoreComments && (
-                      <button
-                        onClick={loadMoreComments}
-                        disabled={isLoadingComments}
-                        className="w-full py-2 rounded-lg bg-[#12121a] border border-[#252538] text-[#606080] hover:text-[#00f0ff] hover:border-[#00f0ff]/30 transition-colors text-sm font-mono disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {isLoadingComments ? (
-                          <>
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            Loading...
-                          </>
-                        ) : (
-                          `Load More (${allComments.length}/${totalComments})`
+                        ))}
+                        {hasMoreComments && (
+                          <button
+                            onClick={loadMoreComments}
+                            disabled={isLoadingComments}
+                            className="w-full py-2 rounded-lg bg-[#12121a] border border-[#252538] text-[#606080] hover:text-[#00f0ff] hover:border-[#00f0ff]/30 transition-colors text-sm font-mono disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            {isLoadingComments ? (
+                              <>
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                Loading...
+                              </>
+                            ) : (
+                              `Load More (${allComments.length} loaded)`
+                            )}
+                          </button>
                         )}
-                      </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -1070,21 +991,18 @@ export default function PostsManagementPage() {
           value={stats?.total_posts || 0}
           icon={FileText}
           color="cyan"
-          trend="+8.2% this week"
         />
         <StatCard
           title="Posts Today"
           value={stats?.posts_today || 0}
           icon={TrendingUp}
           color="green"
-          trend="+15% from yesterday"
         />
         <StatCard
           title="Avg Engagement"
           value={`${stats?.avg_engagement || 0}%`}
           icon={Heart}
           color="magenta"
-          trend="+2.1% this week"
         />
         <StatCard
           title="Flagged Content"
@@ -1177,7 +1095,7 @@ export default function PostsManagementPage() {
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center">
                     <FileText className="w-12 h-12 mx-auto mb-3 text-[#606080]" />
-                    <p className="text-[#a0a0b0] font-mono">No posts match your filters</p>
+                    <p className="text-[#a0a0b0] font-mono">No data available</p>
                   </td>
                 </tr>
               ) : (

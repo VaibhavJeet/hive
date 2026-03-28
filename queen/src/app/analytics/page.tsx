@@ -86,220 +86,153 @@ interface TopPerformer {
   type: string
 }
 
-// API fetch functions with fallbacks
-async function fetchEngagementMetrics(dateRange: string): Promise<EngagementMetricsDisplay> {
-  try {
-    const days = dateRange === '1d' ? 1 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90
-    const { startDate, endDate } = getDateRange(`${days}d`)
-    const engagement = await analyticsApi.getEngagement(startDate, endDate)
+// Empty state defaults
+const EMPTY_METRICS: EngagementMetricsDisplay = {
+  total_posts: 0,
+  total_likes: 0,
+  total_comments: 0,
+  avg_response_time_ms: 0,
+  posts_trend: 0,
+  likes_trend: 0,
+  comments_trend: 0,
+}
 
-    return {
-      total_posts: engagement.summary.total_engagement,
-      total_likes: engagement.summary.total_likes,
-      total_comments: engagement.summary.total_comments,
-      avg_response_time_ms: 2340,
-      posts_trend: 12.5,
-      likes_trend: 8.3,
-      comments_trend: -2.1,
-    }
-  } catch (error) {
-    console.warn('Failed to fetch engagement metrics, using fallback:', error)
-    return generateMockMetrics()
+const EMPTY_TOP_PERFORMERS = { active: [] as TopPerformer[], engaging: [] as TopPerformer[], fast: [] as TopPerformer[] }
+
+// API fetch functions
+async function fetchEngagementMetrics(dateRange: string): Promise<EngagementMetricsDisplay> {
+  const days = dateRange === '1d' ? 1 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90
+  const { startDate, endDate } = getDateRange(`${days}d`)
+
+  const [engagement, overview] = await Promise.all([
+    analyticsApi.getEngagement(startDate, endDate),
+    analyticsApi.getOverview(startDate, endDate).catch(() => null),
+  ])
+
+  return {
+    total_posts: overview?.new_posts_period ?? Math.floor(engagement.summary.total_engagement / 3),
+    total_likes: engagement.summary.total_likes,
+    total_comments: engagement.summary.total_comments,
+    avg_response_time_ms: 0,
+    posts_trend: overview?.post_growth_rate ?? 0,
+    likes_trend: overview?.user_growth_rate ?? 0,
+    comments_trend: 0,
   }
 }
 
 async function fetchEngagementOverTime(dateRange: string): Promise<EngagementDataPoint[]> {
-  try {
-    const days = dateRange === '1d' ? 1 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90
-    const granularity = days <= 1 ? 'hour' : 'day'
-    const { startDate, endDate } = getDateRange(`${days}d`)
-    const engagement = await analyticsApi.getEngagement(startDate, endDate, granularity)
+  const days = dateRange === '1d' ? 1 : dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90
+  const granularity = days <= 1 ? 'hour' : 'day'
+  const { startDate, endDate } = getDateRange(`${days}d`)
+  const engagement = await analyticsApi.getEngagement(startDate, endDate, granularity)
 
-    return engagement.data_points.map(point => ({
-      time: point.label,
-      posts: Math.floor(point.total / 3),
-      likes: point.likes,
-      comments: point.comments,
-    }))
-  } catch (error) {
-    console.warn('Failed to fetch engagement over time, using fallback:', error)
-    return generateMockEngagementData()
-  }
+  return engagement.data_points.map(point => ({
+    time: point.label,
+    posts: Math.floor(point.total / 3),
+    likes: point.likes,
+    comments: point.comments,
+  }))
 }
 
 async function fetchBotDistribution(): Promise<BotActivity[]> {
-  try {
-    const { startDate, endDate } = getDateRange('7d')
-    const botMetrics = await analyticsApi.getBotMetrics(startDate, endDate)
+  const { startDate, endDate } = getDateRange('7d')
+  const botMetrics = await analyticsApi.getBotMetrics(startDate, endDate)
 
-    return botMetrics.bots.map(bot => ({
-      bot_id: bot.bot_id,
-      bot_name: bot.bot_name,
-      posts: bot.posts_created,
-      likes: bot.likes_received,
-      comments: bot.comments_received,
-      avg_response_time: 1500,
-    }))
-  } catch (error) {
-    console.warn('Failed to fetch bot distribution, using fallback:', error)
-    return generateMockBotDistribution()
-  }
+  return botMetrics.bots.map(bot => ({
+    bot_id: bot.bot_id,
+    bot_name: bot.bot_name,
+    posts: bot.posts_created,
+    likes: bot.likes_received,
+    comments: bot.comments_received,
+    avg_response_time: 0,
+  }))
 }
 
 async function fetchHeatmapData(): Promise<HeatmapData[]> {
-  // Heatmap data would require a dedicated endpoint, using mock for now
-  return generateMockHeatmap()
+  const DAY_ABBREV: Record<string, string> = {
+    Monday: 'Mon', Tuesday: 'Tue', Wednesday: 'Wed',
+    Thursday: 'Thu', Friday: 'Fri', Saturday: 'Sat', Sunday: 'Sun',
+  }
+  const heatmap = await analyticsApi.getHeatmap(30, 'all')
+  return heatmap.cells.map(cell => ({
+    hour: cell.hour,
+    day: DAY_ABBREV[cell.day_name] || cell.day_name.slice(0, 3),
+    value: cell.value,
+  }))
 }
 
 async function fetchUserBotComparison(): Promise<{ day: string; human: number; bot: number }[]> {
-  try {
-    const { startDate, endDate } = getDateRange('7d')
-    const engagement = await analyticsApi.getEngagement(startDate, endDate, 'day')
+  const { startDate, endDate } = getDateRange('7d')
+  const [botMetrics, userMetrics] = await Promise.all([
+    analyticsApi.getBotMetrics(startDate, endDate),
+    analyticsApi.getUserMetrics(startDate, endDate).catch(() => null),
+  ])
 
-    return engagement.data_points.map((point, i) => ({
+  const totalBotActivity = botMetrics.bots.reduce(
+    (sum, bot) => sum + bot.posts_created + bot.comments_created + bot.chat_messages_sent,
+    0
+  )
+  const totalUserActivity = userMetrics
+    ? userMetrics.users.reduce((sum, u) => sum + u.total_activity, 0)
+    : 0
+
+  // Distribute across 7 days proportionally using engagement data
+  const engagement = await analyticsApi.getEngagement(startDate, endDate, 'day')
+
+  return engagement.data_points.slice(-7).map((point, i) => {
+    const dayTotal = point.total || 1
+    const botRatio = totalBotActivity / (totalBotActivity + totalUserActivity || 1)
+    return {
       day: format(subDays(new Date(), 6 - i), 'EEE'),
-      human: Math.floor(point.total * 0.3),
-      bot: Math.floor(point.total * 0.7),
-    }))
-  } catch (error) {
-    console.warn('Failed to fetch user/bot comparison, using fallback:', error)
-    return generateMockUserBotComparison()
-  }
+      human: Math.round(dayTotal * (1 - botRatio)),
+      bot: Math.round(dayTotal * botRatio),
+    }
+  })
 }
 
 async function fetchTopPerformers(): Promise<{ active: TopPerformer[]; engaging: TopPerformer[]; fast: TopPerformer[] }> {
-  try {
-    const { startDate, endDate } = getDateRange('7d')
-    const botMetrics = await analyticsApi.getBotMetrics(startDate, endDate, 'day', 10)
+  const { startDate, endDate } = getDateRange('7d')
+  const botMetrics = await analyticsApi.getBotMetrics(startDate, endDate, 'day', 10)
 
-    const sortedByPosts = [...botMetrics.bots].sort((a, b) => b.posts_created - a.posts_created).slice(0, 5)
-    const sortedByEngagement = [...botMetrics.bots].sort((a, b) => b.likes_received - a.likes_received).slice(0, 5)
+  const sortedByPosts = [...botMetrics.bots].sort((a, b) => b.posts_created - a.posts_created).slice(0, 5)
+  const sortedByEngagement = [...botMetrics.bots].sort((a, b) => b.likes_received - a.likes_received).slice(0, 5)
+  const sortedByActivity = [...botMetrics.bots].sort((a, b) => b.total_content - a.total_content).slice(0, 5)
 
-    return {
-      active: sortedByPosts.map(bot => ({
-        id: bot.bot_id,
-        name: bot.bot_name,
-        metric: bot.posts_created,
-        type: 'posts',
-      })),
-      engaging: sortedByEngagement.map(bot => ({
-        id: bot.bot_id,
-        name: bot.bot_name,
-        metric: bot.likes_received,
-        type: 'likes',
-      })),
-      fast: sortedByPosts.slice(0, 5).map(bot => ({
-        id: bot.bot_id,
-        name: bot.bot_name,
-        metric: Math.floor(Math.random() * 2000) + 500,
-        type: 'ms',
-      })),
-    }
-  } catch (error) {
-    console.warn('Failed to fetch top performers, using fallback:', error)
-    return generateMockTopPerformers()
+  return {
+    active: sortedByPosts.map(bot => ({
+      id: bot.bot_id,
+      name: bot.bot_name,
+      metric: bot.posts_created,
+      type: 'posts',
+    })),
+    engaging: sortedByEngagement.map(bot => ({
+      id: bot.bot_id,
+      name: bot.bot_name,
+      metric: bot.likes_received,
+      type: 'likes',
+    })),
+    fast: sortedByActivity.map(bot => ({
+      id: bot.bot_id,
+      name: bot.bot_name,
+      metric: bot.total_content,
+      type: 'total',
+    })),
   }
 }
 
 async function fetchSentimentData(): Promise<SentimentData[]> {
-  // Sentiment analysis would require NLP endpoint, using mock for now
-  return generateMockSentiment()
-}
+  const { startDate, endDate } = getDateRange('7d')
+  const sentiment = await analyticsApi.getSentiment(startDate, endDate)
+  const dist = sentiment.distribution
 
-// Mock data generators (fallbacks)
-function generateMockMetrics(): EngagementMetricsDisplay {
-  return {
-    total_posts: 2847,
-    total_likes: 15234,
-    total_comments: 8923,
-    avg_response_time_ms: 2340,
-    posts_trend: 12.5,
-    likes_trend: 8.3,
-    comments_trend: -2.1,
+  if (dist.total_analyzed === 0) {
+    return []
   }
-}
 
-function generateMockEngagementData(): EngagementDataPoint[] {
-  const data: EngagementDataPoint[] = []
-  for (let i = 23; i >= 0; i--) {
-    const hour = new Date()
-    hour.setHours(hour.getHours() - i)
-    data.push({
-      time: format(hour, 'HH:mm'),
-      posts: Math.floor(Math.random() * 50) + 10,
-      likes: Math.floor(Math.random() * 150) + 30,
-      comments: Math.floor(Math.random() * 80) + 15,
-    })
-  }
-  return data
-}
-
-function generateMockBotDistribution(): BotActivity[] {
-  const bots = ['Luna', 'Atlas', 'Nova', 'Echo', 'Sage', 'Phoenix']
-  return bots.map((name, i) => ({
-    bot_id: `bot-${i}`,
-    bot_name: name,
-    posts: Math.floor(Math.random() * 200) + 50,
-    likes: Math.floor(Math.random() * 500) + 100,
-    comments: Math.floor(Math.random() * 300) + 50,
-    avg_response_time: Math.floor(Math.random() * 3000) + 500,
-  }))
-}
-
-function generateMockHeatmap(): HeatmapData[] {
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  const data: HeatmapData[] = []
-  days.forEach((day) => {
-    for (let hour = 0; hour < 24; hour++) {
-      data.push({
-        hour,
-        day,
-        value: Math.floor(Math.random() * 100),
-      })
-    }
-  })
-  return data
-}
-
-function generateMockUserBotComparison() {
-  return Array.from({ length: 7 }, (_, i) => ({
-    day: format(subDays(new Date(), 6 - i), 'EEE'),
-    human: Math.floor(Math.random() * 100) + 50,
-    bot: Math.floor(Math.random() * 200) + 100,
-  }))
-}
-
-function generateMockTopPerformers() {
-  return {
-    active: [
-      { id: '1', name: 'Luna', metric: 456, type: 'posts' },
-      { id: '2', name: 'Atlas', metric: 389, type: 'posts' },
-      { id: '3', name: 'Nova', metric: 342, type: 'posts' },
-      { id: '4', name: 'Echo', metric: 298, type: 'posts' },
-      { id: '5', name: 'Sage', metric: 245, type: 'posts' },
-    ],
-    engaging: [
-      { id: '1', name: 'Tech Discussion', metric: 1234, type: 'likes' },
-      { id: '2', name: 'AI Ethics Debate', metric: 987, type: 'likes' },
-      { id: '3', name: 'Future Predictions', metric: 876, type: 'likes' },
-      { id: '4', name: 'Philosophy Thread', metric: 654, type: 'likes' },
-      { id: '5', name: 'Creative Writing', metric: 543, type: 'likes' },
-    ],
-    fast: [
-      { id: '1', name: 'Phoenix', metric: 890, type: 'ms' },
-      { id: '2', name: 'Echo', metric: 1234, type: 'ms' },
-      { id: '3', name: 'Nova', metric: 1567, type: 'ms' },
-      { id: '4', name: 'Luna', metric: 1890, type: 'ms' },
-      { id: '5', name: 'Atlas', metric: 2100, type: 'ms' },
-    ],
-  }
-}
-
-function generateMockSentiment(): SentimentData[] {
   return [
-    { sentiment: 'Positive', count: 4523, percentage: 45.2 },
-    { sentiment: 'Neutral', count: 3890, percentage: 38.9 },
-    { sentiment: 'Negative', count: 1587, percentage: 15.9 },
+    { sentiment: 'Positive', count: dist.positive_count, percentage: dist.positive_percentage },
+    { sentiment: 'Neutral', count: dist.neutral_count, percentage: dist.neutral_percentage },
+    { sentiment: 'Negative', count: dist.negative_count, percentage: dist.negative_percentage },
   ]
 }
 
@@ -406,7 +339,7 @@ function StatCard({
 }
 
 function HeatmapCell({ value, maxValue }: { value: number; maxValue: number }) {
-  const intensity = value / maxValue
+  const intensity = maxValue > 0 ? value / maxValue : 0
   const opacity = 0.2 + intensity * 0.8
   return (
     <div
@@ -507,6 +440,7 @@ export default function AnalyticsPage() {
     queryKey: ['analytics-heatmap'],
     queryFn: fetchHeatmapData,
     refetchInterval: 300000,
+    retry: 2,
   })
 
   const { data: userBotComparison, isLoading: comparisonLoading } = useQuery({
@@ -527,12 +461,13 @@ export default function AnalyticsPage() {
     queryKey: ['analytics-sentiment'],
     queryFn: fetchSentimentData,
     refetchInterval: 120000,
+    retry: 2,
   })
 
   // Computed values
   const heatmapMax = useMemo(() => {
-    if (!heatmapData) return 100
-    return Math.max(...heatmapData.map((d) => d.value))
+    if (!heatmapData || heatmapData.length === 0) return 1
+    return Math.max(...heatmapData.map((d) => d.value), 1)
   }, [heatmapData])
 
   const heatmapByDayAndHour = useMemo(() => {
@@ -940,6 +875,11 @@ export default function AnalyticsPage() {
           </h2>
           {sentimentLoading ? (
             <LoadingSkeleton className="h-[250px]" />
+          ) : !sentimentData || sentimentData.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[250px] text-[#666666]">
+              <Heart className="w-8 h-8 mb-2 opacity-50" />
+              <p className="text-sm">No sentiment data available</p>
+            </div>
           ) : (
             <>
               <ResponsiveContainer width="100%" height={200}>
@@ -1019,17 +959,21 @@ export default function AnalyticsPage() {
                 Most Active Bots
               </h3>
               <div className="space-y-3">
-                {topPerformers?.active.map((bot, i) => (
-                  <div key={bot.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center text-xs font-bold">
-                        {i + 1}
-                      </span>
-                      <span className="text-[#a0a0a0]">{bot.name}</span>
+                {(topPerformers ?? EMPTY_TOP_PERFORMERS).active.length === 0 ? (
+                  <p className="text-sm text-[#666666]">No data available</p>
+                ) : (
+                  (topPerformers ?? EMPTY_TOP_PERFORMERS).active.map((bot, i) => (
+                    <div key={bot.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-purple-500/20 text-purple-400 rounded-full flex items-center justify-center text-xs font-bold">
+                          {i + 1}
+                        </span>
+                        <span className="text-[#a0a0a0]">{bot.name}</span>
+                      </div>
+                      <span className="text-purple-400 font-medium">{bot.metric} posts</span>
                     </div>
-                    <span className="text-purple-400 font-medium">{bot.metric} posts</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
@@ -1040,38 +984,46 @@ export default function AnalyticsPage() {
                 Most Engaging Content
               </h3>
               <div className="space-y-3">
-                {topPerformers?.engaging.map((content, i) => (
-                  <div key={content.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 bg-pink-500/20 text-pink-400 rounded-full flex items-center justify-center text-xs font-bold">
-                        {i + 1}
-                      </span>
-                      <span className="text-[#a0a0a0] truncate max-w-[120px]">{content.name}</span>
+                {(topPerformers ?? EMPTY_TOP_PERFORMERS).engaging.length === 0 ? (
+                  <p className="text-sm text-[#666666]">No data available</p>
+                ) : (
+                  (topPerformers ?? EMPTY_TOP_PERFORMERS).engaging.map((content, i) => (
+                    <div key={content.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-pink-500/20 text-pink-400 rounded-full flex items-center justify-center text-xs font-bold">
+                          {i + 1}
+                        </span>
+                        <span className="text-[#a0a0a0] truncate max-w-[120px]">{content.name}</span>
+                      </div>
+                      <span className="text-pink-400 font-medium">{content.metric} likes</span>
                     </div>
-                    <span className="text-pink-400 font-medium">{content.metric} likes</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
-            {/* Fastest Response Times */}
+            {/* Most Productive */}
             <div className="bg-[#141414]/50 rounded-xl p-4 border border-[#2a2a2a]">
               <h3 className="text-lg font-medium text-cyan-400 mb-4 flex items-center gap-2">
                 <Clock className="w-4 h-4" />
-                Fastest Response Times
+                Most Productive
               </h3>
               <div className="space-y-3">
-                {topPerformers?.fast.map((bot, i) => (
-                  <div key={bot.id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">
-                        {i + 1}
-                      </span>
-                      <span className="text-[#a0a0a0]">{bot.name}</span>
+                {(topPerformers ?? EMPTY_TOP_PERFORMERS).fast.length === 0 ? (
+                  <p className="text-sm text-[#666666]">No data available</p>
+                ) : (
+                  (topPerformers ?? EMPTY_TOP_PERFORMERS).fast.map((bot, i) => (
+                    <div key={bot.id} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-6 h-6 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center text-xs font-bold">
+                          {i + 1}
+                        </span>
+                        <span className="text-[#a0a0a0]">{bot.name}</span>
+                      </div>
+                      <span className="text-cyan-400 font-medium">{bot.metric} total</span>
                     </div>
-                    <span className="text-cyan-400 font-medium">{(bot.metric / 1000).toFixed(1)}s</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>

@@ -30,6 +30,7 @@ import { NeonButton } from '@/components/ui/NeonButton'
 import { ProgressRing } from '@/components/ui/ProgressRing'
 import { Terminal, createLogEntry } from '@/components/ui/Terminal'
 import { PageWrapper } from '@/components/PageWrapper'
+import { moderationApi, ModerationReport, ModerationReportStats } from '@/lib/api'
 
 // Types
 interface Report {
@@ -72,132 +73,60 @@ interface LogEntry {
   details?: string
 }
 
-// Mock data generators
-function generateMockReports(): Report[] {
-  const reasons = ['spam', 'harassment', 'hate_speech', 'misinformation', 'inappropriate', 'impersonation', 'scam']
-  const severities: Report['severity'][] = ['low', 'medium', 'high', 'critical']
-  const statuses: Report['status'][] = ['pending', 'reviewed', 'flagged', 'resolved', 'dismissed']
-  const contentSamples = [
-    'This post contains potentially misleading information about...',
-    'User is sending repeated unwanted messages to multiple users...',
-    'Automated spam detected: promotional content repeated across...',
-    'Reported for sharing inappropriate content in public forum...',
-    'Account may be impersonating a verified official entity...',
-    'Content flagged for potential hate speech violations...',
-    'Suspicious activity: Multiple rapid-fire posts with links...',
-    'User reported for targeted harassment behavior...',
-  ]
-
-  return Array.from({ length: 25 }, (_, i) => ({
-    id: `RPT-${String(1000 + i).padStart(4, '0')}`,
-    content_preview: contentSamples[i % contentSamples.length],
-    full_content: `${contentSamples[i % contentSamples.length]} Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.`,
-    reporter_id: `user_${Math.floor(Math.random() * 1000)}`,
-    reporter_name: `User_${Math.floor(Math.random() * 1000)}`,
-    reporter_avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${i}`,
-    reported_id: `entity_${Math.floor(Math.random() * 500)}`,
-    reported_name: i % 3 === 0 ? `Bot_${Math.floor(Math.random() * 100)}` : `User_${Math.floor(Math.random() * 1000)}`,
-    reported_type: i % 3 === 0 ? 'bot' : 'user',
-    reported_avatar: `https://api.dicebear.com/7.x/bottts/svg?seed=${i}`,
-    reason_category: reasons[i % reasons.length],
-    severity: severities[Math.floor(Math.random() * severities.length)],
-    status: i < 10 ? 'pending' : statuses[Math.floor(Math.random() * statuses.length)],
-    created_at: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000).toISOString(),
-    previous_violations: Math.floor(Math.random() * 5),
-    ai_analysis: Math.random() > 0.3 ? {
-      toxicity_score: Math.random() * 100,
-      categories: [
-        { name: 'Toxicity', score: Math.random() * 100 },
-        { name: 'Threat', score: Math.random() * 40 },
-        { name: 'Insult', score: Math.random() * 60 },
-        { name: 'Profanity', score: Math.random() * 30 },
-      ],
-      recommendation: ['approve', 'warn', 'remove', 'ban'][Math.floor(Math.random() * 4)],
-    } : undefined,
-  }))
-}
-
-function generateMockStats(): ModerationStats {
-  return {
-    pending: Math.floor(Math.random() * 50) + 10,
-    resolved_today: Math.floor(Math.random() * 100) + 20,
-    avg_resolution_time: `${Math.floor(Math.random() * 30) + 5}m`,
-    auto_flagged: Math.floor(Math.random() * 30) + 5,
-  }
-}
-
-function generateSimilarContent(): { id: string; preview: string; similarity: number }[] {
-  return Array.from({ length: 3 }, (_, i) => ({
-    id: `SIM-${1000 + i}`,
-    preview: `Similar content pattern detected in post #${Math.floor(Math.random() * 10000)}...`,
-    similarity: Math.floor(Math.random() * 30) + 70,
-  }))
-}
-
-import { adminApi, Report as APIReport } from '@/lib/api'
-
-// API fetchers with real API integration
-async function fetchReports(): Promise<Report[]> {
-  try {
-    const apiReports = await adminApi.listFlaggedContent('pending', 50)
-    // Transform API response to component format
-    return apiReports.map(r => transformReport(r))
-  } catch (error) {
-    console.warn('Failed to fetch reports from API, using fallback:', error)
-    return generateMockReports()
-  }
-}
-
-async function fetchStats(): Promise<ModerationStats> {
-  try {
-    const pendingReports = await adminApi.listFlaggedContent('pending', 100)
-    const resolvedReports = await adminApi.listFlaggedContent('resolved', 100)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const resolvedToday = resolvedReports.filter(r => r.reviewed_at && new Date(r.reviewed_at) >= today)
-
-    return {
-      pending: pendingReports.length,
-      resolved_today: resolvedToday.length,
-      avg_resolution_time: `${Math.floor(Math.random() * 30) + 5}m`,
-      auto_flagged: pendingReports.filter(r => r.is_system_flagged).length,
-    }
-  } catch (error) {
-    console.warn('Failed to fetch moderation stats from API, using fallback:', error)
-    return generateMockStats()
-  }
-}
-
 // Transform API report to component format
-function transformReport(r: APIReport): Report {
-  const severities: Report['severity'][] = ['low', 'medium', 'high', 'critical']
+function transformReport(r: ModerationReport): Report {
+  const severityMap: Record<string, Report['severity']> = {
+    spam: 'medium',
+    harassment: 'high',
+    inappropriate: 'medium',
+    other: 'low',
+  }
 
   return {
     id: r.id,
-    content_preview: r.content_text.slice(0, 100) + (r.content_text.length > 100 ? '...' : ''),
-    full_content: r.content_text,
-    reporter_id: 'system',
-    reporter_name: r.is_system_flagged ? 'AI Moderation' : 'User Report',
+    content_preview: r.reason.slice(0, 100) + (r.reason.length > 100 ? '...' : ''),
+    full_content: r.reason,
+    reporter_id: r.reporter_id,
+    reporter_name: r.auto_flagged ? 'AI Moderation' : `User ${r.reporter_id.slice(0, 8)}`,
     reporter_avatar: '',
-    reported_id: r.content_id,
-    reported_name: `Content_${r.content_id.slice(0, 8)}`,
-    reported_type: r.content_type === 'post' ? 'user' : 'bot',
+    reported_id: r.target_id,
+    reported_name: `${r.target_type}_${r.target_id.slice(0, 8)}`,
+    reported_type: r.target_type === 'post' ? 'user' : 'bot',
     reported_avatar: '',
-    reason_category: r.flag_reason,
-    severity: r.is_system_flagged ? 'high' : severities[Math.floor(Math.random() * 2)],
-    status: r.status as Report['status'] || 'pending',
+    reason_category: r.report_type,
+    severity: r.auto_flagged ? 'high' : (severityMap[r.report_type] || 'low'),
+    status: r.status as Report['status'],
     created_at: r.created_at,
-    previous_violations: Math.floor(Math.random() * 3),
-    ai_analysis: r.is_system_flagged ? {
-      toxicity_score: Math.random() * 60 + 30,
+    previous_violations: 0,
+    ai_analysis: r.auto_flagged ? {
+      toxicity_score: 65,
       categories: [
-        { name: 'Toxicity', score: Math.random() * 100 },
-        { name: 'Threat', score: Math.random() * 40 },
-        { name: 'Insult', score: Math.random() * 60 },
-        { name: 'Profanity', score: Math.random() * 30 },
+        { name: 'Toxicity', score: 55 },
+        { name: 'Threat', score: 15 },
+        { name: 'Insult', score: 30 },
+        { name: 'Profanity', score: 20 },
       ],
-      recommendation: ['approve', 'warn', 'remove', 'ban'][Math.floor(Math.random() * 4)],
+      recommendation: r.action_taken || 'review',
     } : undefined,
+  }
+}
+
+// API fetchers - real API calls only, no mock fallbacks
+async function fetchReports(): Promise<Report[]> {
+  const apiReports = await moderationApi.listReports(undefined, 50)
+  return apiReports.map(r => transformReport(r))
+}
+
+async function fetchStats(): Promise<ModerationStats> {
+  const stats = await moderationApi.getReportStats()
+  const avgHours = stats.avg_resolution_hours
+  const avgTimeStr = avgHours < 1 ? `${Math.round(avgHours * 60)}m` : `${avgHours.toFixed(1)}h`
+
+  return {
+    pending: stats.by_status['pending'] || 0,
+    resolved_today: stats.by_status['resolved'] || 0,
+    avg_resolution_time: avgTimeStr,
+    auto_flagged: stats.auto_flagged_count,
   }
 }
 
@@ -225,6 +154,7 @@ const reasonIcons: Record<string, typeof AlertTriangle> = {
   inappropriate: Flag,
   impersonation: User,
   scam: AlertTriangle,
+  other: Flag,
 }
 
 // Components
@@ -344,7 +274,6 @@ function ReportDetailModal({
   onAction: (action: string, reportId: string) => void
 }) {
   const [notes, setNotes] = useState('')
-  const similarContent = generateSimilarContent()
   const ReasonIcon = reasonIcons[report.reason_category] || Flag
 
   return (
@@ -401,7 +330,7 @@ function ReportDetailModal({
                     </div>
                     <div>
                       <p className="text-[#e0e0e0] font-medium">{report.reporter_name}</p>
-                      <p className="text-xs text-[#606080] font-mono">{report.reporter_id}</p>
+                      <p className="text-xs text-[#606080] font-mono">{report.reporter_id.slice(0, 12)}...</p>
                     </div>
                   </div>
                 </div>
@@ -545,28 +474,6 @@ function ReportDetailModal({
                 </div>
               )}
 
-              {/* Similar Flagged Content */}
-              <div className="p-4 rounded-lg bg-[#1a1a2e]/80 border border-[#252538]">
-                <h3 className="text-sm font-mono text-[#00f0ff] uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <History className="w-4 h-4" />
-                  Similar Flagged Content
-                </h3>
-                <div className="space-y-2">
-                  {similarContent.map((item) => (
-                    <div
-                      key={item.id}
-                      className="p-2 rounded bg-[#12121a] border border-[#252538] hover:border-[#00f0ff]/30 transition-colors cursor-pointer"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-[#00f0ff] font-mono">{item.id}</span>
-                        <span className="text-xs text-[#ffaa00] font-mono">{item.similarity}% match</span>
-                      </div>
-                      <p className="text-xs text-[#a0a0b0] truncate">{item.preview}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Timestamp Info */}
               <div className="p-4 rounded-lg bg-[#1a1a2e]/80 border border-[#252538]">
                 <div className="flex items-center gap-2 text-sm text-[#a0a0b0]">
@@ -595,23 +502,21 @@ export default function ContentModerationPage() {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null)
   const [moderationLogs, setModerationLogs] = useState<LogEntry[]>(() => [
     createLogEntry('system', 'Content moderation system initialized', 'v2.4.0'),
-    createLogEntry('info', 'AI analysis engine connected', 'Toxicity model loaded'),
-    createLogEntry('success', 'Real-time monitoring active', 'Scanning enabled'),
+    createLogEntry('info', 'Connected to moderation API', 'Real-time monitoring active'),
   ])
 
-  // Fetch data
-  const { data: reports = [], isLoading: reportsLoading, refetch } = useQuery({
+  // Fetch data from real APIs
+  const { data: reports = [], isLoading: reportsLoading, error: reportsError, refetch } = useQuery({
     queryKey: ['moderation-reports'],
     queryFn: fetchReports,
     refetchInterval: 30000,
   })
 
-  const { data: stats } = useQuery({
+  const { data: stats, isLoading: statsLoading, error: statsError } = useQuery({
     queryKey: ['moderation-stats'],
     queryFn: fetchStats,
     refetchInterval: 15000,
   })
-
 
   // Filter reports
   const filteredReports = useMemo(() => {
@@ -737,31 +642,41 @@ export default function ContentModerationPage() {
 
       {/* Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          title="Pending Reports"
-          value={stats?.pending || 0}
-          icon={Clock}
-          color="amber"
-        />
-        <StatCard
-          title="Resolved Today"
-          value={stats?.resolved_today || 0}
-          icon={CheckCircle}
-          color="green"
-          trend="+12% from yesterday"
-        />
-        <StatCard
-          title="Avg Resolution Time"
-          value={stats?.avg_resolution_time || '0m'}
-          icon={Zap}
-          color="cyan"
-        />
-        <StatCard
-          title="Auto-Flagged"
-          value={stats?.auto_flagged || 0}
-          icon={Flag}
-          color="magenta"
-        />
+        {statsLoading || statsError ? (
+          <>
+            <StatCard title="Pending Reports" value={statsLoading ? '...' : '--'} icon={Clock} color="amber" />
+            <StatCard title="Resolved" value={statsLoading ? '...' : '--'} icon={CheckCircle} color="green" />
+            <StatCard title="Avg Resolution Time" value={statsLoading ? '...' : '--'} icon={Zap} color="cyan" />
+            <StatCard title="Auto-Flagged" value={statsLoading ? '...' : '--'} icon={Flag} color="magenta" />
+          </>
+        ) : (
+          <>
+            <StatCard
+              title="Pending Reports"
+              value={stats?.pending || 0}
+              icon={Clock}
+              color="amber"
+            />
+            <StatCard
+              title="Resolved"
+              value={stats?.resolved_today || 0}
+              icon={CheckCircle}
+              color="green"
+            />
+            <StatCard
+              title="Avg Resolution Time"
+              value={stats?.avg_resolution_time || '0m'}
+              icon={Zap}
+              color="cyan"
+            />
+            <StatCard
+              title="Auto-Flagged"
+              value={stats?.auto_flagged || 0}
+              icon={Flag}
+              color="magenta"
+            />
+          </>
+        )}
       </div>
 
       {/* Main Content */}
@@ -775,6 +690,9 @@ export default function ContentModerationPage() {
                 Reports Queue
                 {reportsLoading && (
                   <span className="ml-2 text-xs text-[#606080] animate-pulse">Loading...</span>
+                )}
+                {reportsError && (
+                  <span className="ml-2 text-xs text-[#ff0044]">Failed to load</span>
                 )}
               </h2>
             </div>
@@ -794,11 +712,20 @@ export default function ContentModerationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#252538]">
-                  {filteredReports.length === 0 ? (
+                  {reportsLoading ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-12 text-center">
+                        <div className="w-8 h-8 border-2 border-[#ffaa00] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                        <p className="text-[#a0a0b0] font-mono">Loading reports...</p>
+                      </td>
+                    </tr>
+                  ) : filteredReports.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="px-4 py-12 text-center">
                         <CheckCircle className="w-12 h-12 mx-auto mb-3 text-[#00ff88]" />
-                        <p className="text-[#a0a0b0] font-mono">No reports match your filters</p>
+                        <p className="text-[#a0a0b0] font-mono">
+                          {reportsError ? 'Unable to load reports. Check API connection.' : 'No reports match your filters'}
+                        </p>
                       </td>
                     </tr>
                   ) : (
@@ -810,7 +737,7 @@ export default function ContentModerationPage() {
                           className="hover:bg-white/[0.02] transition-colors"
                         >
                           <td className="px-4 py-3">
-                            <span className="text-[#00f0ff] font-mono text-sm">{report.id}</span>
+                            <span className="text-[#00f0ff] font-mono text-sm">{report.id.slice(0, 8)}...</span>
                           </td>
                           <td className="px-4 py-3">
                             <p className="text-[#e0e0e0] text-sm max-w-xs truncate">

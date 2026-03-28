@@ -222,6 +222,81 @@ export interface BotMetricsResponse {
   granularity: string;
 }
 
+export interface HeatmapCell {
+  hour: number;
+  day_of_week: number;
+  day_name: string;
+  value: number;
+  normalized: number;
+}
+
+export interface ActivityHeatmapResponse {
+  cells: HeatmapCell[];
+  max_value: number;
+  total_activity: number;
+  peak_hour: number;
+  peak_day: number;
+  peak_day_name: string;
+  metric_type: string;
+  days_analyzed: number;
+  generated_at: string;
+}
+
+export interface SentimentDistribution {
+  positive_count: number;
+  positive_percentage: number;
+  neutral_count: number;
+  neutral_percentage: number;
+  negative_count: number;
+  negative_percentage: number;
+  total_analyzed: number;
+}
+
+export interface SentimentAnalysisResponse {
+  distribution: SentimentDistribution;
+  trends: Array<{
+    timestamp: string;
+    label: string;
+    positive: number;
+    neutral: number;
+    negative: number;
+    dominant_sentiment: string;
+  }>;
+  top_positive: Array<{ content_id: string; content_preview: string; sentiment: string; confidence: number }>;
+  top_negative: Array<{ content_id: string; content_preview: string; sentiment: string; confidence: number }>;
+  analysis_method: string;
+  start_date: string;
+  end_date: string;
+  content_type: string;
+}
+
+export interface UserMetricsItem {
+  user_id: string;
+  display_name: string;
+  avatar_url: string | null;
+  posts_created: number;
+  comments_made: number;
+  likes_given: number;
+  chat_messages: number;
+  dm_messages: number;
+  total_activity: number;
+  session_count: number;
+  total_time_minutes: number;
+  avg_session_minutes: number;
+  joined_at: string | null;
+  last_active: string | null;
+}
+
+export interface UserMetricsResponse {
+  users: UserMetricsItem[];
+  total_users: number;
+  active_users_count: number;
+  summary: Record<string, unknown>;
+  start_date: string;
+  end_date: string;
+  granularity: string;
+}
+
 export interface AuthenticityMode {
   demo_mode: boolean;
   timing_multiplier: number;
@@ -374,6 +449,21 @@ export const analyticsApi = {
       events_last_5min: number;
       timestamp: string;
     }>('/analytics/realtime'),
+
+  getHeatmap: (days = 30, metric: 'posts' | 'comments' | 'likes' | 'all' = 'all') =>
+    apiFetch<ActivityHeatmapResponse>(
+      `/analytics/heatmap?days=${days}&metric=${metric}`
+    ),
+
+  getSentiment: (startDate?: string, endDate?: string, contentType = 'posts', granularity = 'day') =>
+    apiFetch<SentimentAnalysisResponse>(
+      `/analytics/sentiment?content_type=${contentType}&granularity=${granularity}${startDate ? `&start_date=${startDate}` : ''}${endDate ? `&end_date=${endDate}` : ''}`
+    ),
+
+  getUserMetrics: (startDate?: string, endDate?: string, granularity = 'day', limit = 50) =>
+    apiFetch<UserMetricsResponse>(
+      `/analytics/users?granularity=${granularity}&limit=${limit}${startDate ? `&start_date=${startDate}` : ''}${endDate ? `&end_date=${endDate}` : ''}`
+    ),
 };
 
 // Admin API
@@ -586,6 +676,130 @@ export const platformApi = {
       communities_created: number;
       communities: Array<{ id: string; name: string; bots: number }>;
     }>(`/platform/initialize?num_communities=${numCommunities}`, {
+      method: 'POST',
+    }),
+};
+
+// System API
+export interface SystemResources {
+  cpu_percent: number;
+  cpu_count: number;
+  memory_used_gb: number;
+  memory_total_gb: number;
+  memory_percent: number;
+  disk_used_gb: number;
+  disk_total_gb: number;
+  disk_percent: number;
+  network_sent_mb_s: number;
+  network_recv_mb_s: number;
+}
+
+export interface SystemServiceStatus {
+  name: string;
+  status: 'online' | 'offline' | 'degraded';
+  metrics: { label: string; value: string }[];
+}
+
+export interface SystemStatusData {
+  uptime_seconds: number;
+  server_start_time: string;
+  resources: SystemResources;
+  services: SystemServiceStatus[];
+  active_connections: number;
+  python_version: string;
+  pid: number;
+}
+
+export interface PerformancePoint {
+  time: string;
+  cpu: number;
+  memory: number;
+  disk_io_read: number;
+  disk_io_write: number;
+}
+
+export interface PerformanceResponse {
+  data_points: PerformancePoint[];
+  summary: Record<string, number>;
+}
+
+export interface SystemLogEntry {
+  id: number;
+  timestamp: string;
+  level: string;
+  message: string;
+  details: string;
+  source: string;
+}
+
+export interface SystemLogsResponse {
+  logs: SystemLogEntry[];
+  total: number;
+}
+
+export const systemApi = {
+  getStatus: () => apiFetch<SystemStatusData>('/system/status'),
+
+  getPerformance: (points = 30) =>
+    apiFetch<PerformanceResponse>(`/system/performance?points=${points}`),
+
+  getLogs: (params?: { level?: string; search?: string; limit?: number; offset?: number }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.level) queryParams.set('level', params.level);
+    if (params?.search) queryParams.set('search', params.search);
+    if (params?.limit) queryParams.set('limit', String(params.limit));
+    if (params?.offset) queryParams.set('offset', String(params.offset));
+    return apiFetch<SystemLogsResponse>(`/system/logs?${queryParams.toString()}`);
+  },
+};
+
+// Moderation API (for reports page)
+export interface ModerationReport {
+  id: string;
+  reporter_id: string;
+  target_type: string;
+  target_id: string;
+  report_type: string;
+  reason: string;
+  status: string;
+  created_at: string;
+  reviewed_at: string | null;
+  reviewer_id: string | null;
+  action_taken: string | null;
+  notes: string | null;
+  auto_flagged: boolean;
+}
+
+export interface ModerationReportStats {
+  by_status: Record<string, number>;
+  by_type: Record<string, number>;
+  total_reports: number;
+  auto_flagged_count: number;
+  avg_resolution_hours: number;
+}
+
+export const moderationApi = {
+  listReports: (status?: string, limit = 50) => {
+    const queryParams = new URLSearchParams();
+    if (status) queryParams.set('status', status);
+    queryParams.set('limit', String(limit));
+    return apiFetch<ModerationReport[]>(`/moderation/reports?${queryParams.toString()}`);
+  },
+
+  getReportStats: () =>
+    apiFetch<ModerationReportStats>('/moderation/reports/stats'),
+
+  getReport: (reportId: string) =>
+    apiFetch<ModerationReport>(`/moderation/reports/${reportId}`),
+
+  reviewReport: (reportId: string, reviewerId: string, action: string, notes?: string) =>
+    apiFetch<ModerationReport>(`/moderation/reports/${reportId}/review?reviewer_id=${reviewerId}`, {
+      method: 'POST',
+      body: JSON.stringify({ action, notes }),
+    }),
+
+  dismissReport: (reportId: string, reviewerId: string, notes?: string) =>
+    apiFetch<ModerationReport>(`/moderation/reports/${reportId}/dismiss?reviewer_id=${reviewerId}&notes=${notes || ''}`, {
       method: 'POST',
     }),
 };
