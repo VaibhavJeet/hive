@@ -318,7 +318,15 @@ async def logout(request: LogoutRequest):
     return MessageResponse(message="Logged out successfully")
 
 
-@router.get("/me", response_model=UserInfoResponse)
+@router.get(
+    "/me",
+    response_model=UserInfoResponse,
+    summary="Current user profile",
+    description=(
+        "Returns the authenticated app user. Requires **JWT Bearer** "
+        "(use **Authorize** with `access_token` from login/register)."
+    ),
+)
 @handle_errors(default_error=DatabaseError)
 async def get_current_user_info(
     current_user: AuthenticatedUser = Depends(get_current_user)
