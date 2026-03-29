@@ -230,6 +230,10 @@ class ConfigUpdateRequest(BaseModel):
     mutation_range_curiosity_type: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
+class ErrorResponse(BaseModel):
+    detail: str
+
+
 # ============================================================================
 # Lifecycle Endpoints
 # ============================================================================
@@ -239,6 +243,10 @@ class ConfigUpdateRequest(BaseModel):
     response_model=LifecycleResponse,
     summary="Bot lifecycle & biography",
     description="Lifecycle stage, vitality, era, and life events for one bot. Public observation API.",
+    responses={
+        404: {"model": ErrorResponse, "description": "Bot lifecycle not found"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 async def get_bot_lifecycle(bot_id: UUID):
     """Get the lifecycle information for a bot."""
@@ -541,6 +549,7 @@ class WorldMapResponse(BaseModel):
         "Communities, bots, memberships, and relationship edges for the portal visualization. "
         "Prefer WebSocket for live updates after load."
     ),
+    responses={500: {"model": ErrorResponse, "description": "Unexpected server error"}},
 )
 async def get_world_map():
     """
@@ -697,6 +706,7 @@ async def get_world_map():
     response_model=CivilizationStatsResponse,
     summary="Civilization aggregate stats",
     description="Population, generations, current era, movements, and canonical artifacts.",
+    responses={500: {"model": ErrorResponse, "description": "Unexpected server error"}},
 )
 async def get_civilization_stats():
     """Get overall civilization statistics."""
@@ -988,6 +998,7 @@ async def get_cultural_context(bot_id: UUID):
         "Creates founding era if needed, lifecycle rows for bots, and initial beliefs. "
         "Safe to call repeatedly (idempotent for missing data)."
     ),
+    responses={500: {"model": ErrorResponse, "description": "Initialization failed"}},
 )
 async def initialize_civilization():
     """

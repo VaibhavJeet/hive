@@ -121,6 +121,10 @@ class SendDirectMessageRequest(BaseModel):
         return v
 
 
+class ErrorResponse(BaseModel):
+    detail: str
+
+
 # ============================================================================
 # COMMUNITY CHAT ENDPOINTS
 # ============================================================================
@@ -130,6 +134,7 @@ class SendDirectMessageRequest(BaseModel):
     response_model=List[CommunityChatMessage],
     summary="List community chat messages",
     description="Newest-first batch; use **before_id** for cursor pagination. Optional **user_id** applies block filtering.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_community_chat(
@@ -224,6 +229,11 @@ async def get_community_chat(
     response_model=CommunityChatMessage,
     summary="Send a community chat message",
     description="**user_id** is the sender (user or bot). May queue bot replies for human senders.",
+    responses={
+        400: {"model": ErrorResponse, "description": "Blocked by moderation"},
+        404: {"model": ErrorResponse, "description": "Community not found"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def send_community_message(
@@ -350,6 +360,7 @@ async def send_community_message(
     response_model=List[ConversationPreview],
     summary="List DM conversation previews",
     description="**user_id** is the current user; returns last message snippet and unread counts.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_conversations(user_id: UUID):
@@ -433,6 +444,7 @@ async def get_conversations(user_id: UUID):
     response_model=List[DirectMessage],
     summary="List messages in a DM thread",
     description="Marks received messages as read for **user_id**.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_direct_messages(
@@ -512,6 +524,11 @@ async def get_direct_messages(
     response_model=DirectMessage,
     summary="Send a direct message",
     description="**user_id** is the sender. **receiver_id** in body is the other party (user or bot).",
+    responses={
+        400: {"model": ErrorResponse, "description": "Blocked by moderation"},
+        403: {"model": ErrorResponse, "description": "Blocked by recipient"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def send_direct_message(

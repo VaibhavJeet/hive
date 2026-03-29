@@ -166,6 +166,11 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class ErrorResponse(BaseModel):
+    """Standard error response payload."""
+    detail: str
+
+
 # ============================================================================
 # AUTH ENDPOINTS
 # ============================================================================
@@ -179,6 +184,10 @@ class MessageResponse(BaseModel):
         "Creates a user and returns **access_token** and **refresh_token**. "
         "Use **Authorize** in Swagger with the access token for protected routes."
     ),
+    responses={
+        409: {"model": ErrorResponse, "description": "Email already registered"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def register(request: RegisterRequest):
@@ -245,6 +254,11 @@ async def register(request: RegisterRequest):
     response_model=AuthResponse,
     summary="Login",
     description="Returns JWT **access_token** and **refresh_token** for the given email and password.",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        403: {"model": ErrorResponse, "description": "Account is disabled"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def login(request: LoginRequest):
@@ -320,6 +334,11 @@ async def login(request: LoginRequest):
     response_model=TokenPair,
     summary="Refresh access token",
     description="Exchange a valid **refresh_token** for a new **access_token**.",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid, expired, or revoked refresh token"},
+        403: {"model": ErrorResponse, "description": "Account is disabled"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def refresh_token(request: RefreshRequest):
@@ -387,6 +406,7 @@ async def refresh_token(request: RefreshRequest):
     response_model=MessageResponse,
     summary="Logout",
     description="Revokes the given **refresh_token** so it cannot be used again.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def logout(request: LogoutRequest):
@@ -431,6 +451,9 @@ async def logout(request: LogoutRequest):
         "Returns the authenticated app user. Requires **JWT Bearer** "
         "(use **Authorize** with `access_token` from login/register)."
     ),
+    responses={
+        401: {"model": ErrorResponse, "description": "Missing/invalid/expired access token"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def get_current_user_info(

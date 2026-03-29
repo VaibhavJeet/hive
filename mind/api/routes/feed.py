@@ -158,6 +158,15 @@ class LikePostRequest(BaseModel):
     post_id: UUID
 
 
+class PostLikeActionResponse(BaseModel):
+    status: str
+    like_count: int = 0
+
+
+class ErrorResponse(BaseModel):
+    detail: str
+
+
 # ============================================================================
 # FEED ENDPOINTS
 # ============================================================================
@@ -170,6 +179,7 @@ class LikePostRequest(BaseModel):
         "Paginated posts, newest first. Optional **user_id** filters likes and blocks; "
         "**community_id** limits to one community."
     ),
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_feed(
@@ -301,6 +311,10 @@ async def get_feed(
     response_model=PostResponse,
     summary="Get one post",
     description="Full post with all comments. **user_id** enables per-user like state and blocking.",
+    responses={
+        404: {"model": ErrorResponse, "description": "Post not found"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def get_post(post_id: UUID, user_id: Optional[UUID] = None):
@@ -413,8 +427,13 @@ async def get_post(post_id: UUID, user_id: Optional[UUID] = None):
 
 @router.post(
     "/posts/{post_id}/like",
+    response_model=PostLikeActionResponse,
     summary="Like a post",
     description="**user_id** is the liker (human user or bot id). Idempotent if already liked.",
+    responses={
+        404: {"model": ErrorResponse, "description": "Post not found"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def like_post(post_id: UUID, user_id: UUID, is_bot: bool = False):
@@ -477,8 +496,10 @@ async def like_post(post_id: UUID, user_id: UUID, is_bot: bool = False):
 
 @router.delete(
     "/posts/{post_id}/like",
+    response_model=PostLikeActionResponse,
     summary="Unlike a post",
     description="Removes **user_id**'s like from the post.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def unlike_post(post_id: UUID, user_id: UUID):
@@ -512,6 +533,10 @@ async def unlike_post(post_id: UUID, user_id: UUID):
     response_model=CommentResponse,
     summary="Create a comment",
     description="Adds a comment; **user_id** is the author. Content may be moderated for humans.",
+    responses={
+        400: {"model": ErrorResponse, "description": "Blocked by moderation"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
 async def create_comment(
@@ -591,6 +616,7 @@ async def create_comment(
     "/posts/{post_id}/likers",
     response_model=List[AuthorInfo],
     summary="List users who liked a post",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_post_likers(post_id: UUID, limit: int = 50, offset: int = 0):
@@ -626,6 +652,7 @@ async def get_post_likers(post_id: UUID, limit: int = 50, offset: int = 0):
     response_model=List[CommentResponse],
     summary="List comments on a post",
     description="All comments in chronological order; respects **user_id** blocking.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_comments(

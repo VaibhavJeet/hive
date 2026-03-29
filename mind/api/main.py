@@ -481,15 +481,40 @@ class PlatformStatsResponse(BaseModel):
     scheduler_stats: Dict[str, Any]
 
 
+class HealthResponse(BaseModel):
+    status: str
+    timestamp: str
+
+
+class DetailedHealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    components: Dict[str, str]
+
+
+class PlatformCommunityInitItem(BaseModel):
+    id: str
+    name: str
+    bots: int
+
+
+class PlatformInitializeResponse(BaseModel):
+    status: str
+    communities_created: int
+    communities: List[PlatformCommunityInitItem]
+
+
 # ============================================================================
 # HEALTH ENDPOINTS
 # ============================================================================
 
 @app.get(
     "/health",
+    response_model=HealthResponse,
     tags=["health"],
     summary="Liveness check",
     description="Returns `healthy` if the process is up. No authentication required.",
+    responses={500: {"description": "Unexpected server error"}},
 )
 async def health_check():
     """Basic health check."""
@@ -498,9 +523,11 @@ async def health_check():
 
 @app.get(
     "/health/detailed",
+    response_model=DetailedHealthResponse,
     tags=["health"],
     summary="Detailed health",
     description="Includes LLM and scheduler status. May report `degraded` if the LLM is unreachable.",
+    responses={500: {"description": "Unexpected server error"}},
 )
 async def detailed_health():
     """Detailed health check with component status."""
@@ -528,6 +555,7 @@ async def detailed_health():
     tags=["platform"],
     summary="List communities",
     description="All communities, newest first.",
+    responses={500: {"description": "Unexpected server error"}},
 )
 async def list_communities():
     """List all communities."""
@@ -559,6 +587,7 @@ async def list_communities():
     tags=["platform"],
     summary="Create a community",
     description="Creates a community and seeds **initial_bot_count** AI companions.",
+    responses={422: {"description": "Validation error"}},
 )
 async def create_community(request: CreateCommunityRequest):
     """Create a new community with AI companions."""
@@ -589,6 +618,7 @@ async def create_community(request: CreateCommunityRequest):
     response_model=CommunityResponse,
     tags=["platform"],
     summary="Get community by ID",
+    responses={404: {"description": "Community not found"}},
 )
 async def get_community(community_id: UUID):
     """Get community details."""
@@ -619,6 +649,7 @@ async def get_community(community_id: UUID):
     response_model=List[BotResponse],
     tags=["platform"],
     summary="List bots in a community",
+    responses={422: {"description": "Validation error"}},
 )
 async def get_community_bots(community_id: UUID, limit: int = 50):
     """Get AI companions in a community."""
@@ -666,6 +697,10 @@ async def get_community_bots(community_id: UUID, limit: int = 50):
         "Runs memory recall, LLM generation, emotional update, and persistence. "
         "Requires a working LLM (Ollama) for non-error responses."
     ),
+    responses={
+        404: {"description": "Bot not found"},
+        422: {"description": "Validation error"},
+    },
 )
 async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
     """
@@ -795,9 +830,11 @@ async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
 
 @app.post(
     "/platform/initialize",
+    response_model=PlatformInitializeResponse,
     tags=["platform"],
     summary="Initialize platform",
     description="Creates **num_communities** communities and seeds bots via the orchestrator.",
+    responses={422: {"description": "Validation error"}},
 )
 async def initialize_platform(num_communities: int = 10):
     """Initialize the platform with communities and bots."""
@@ -821,6 +858,7 @@ async def initialize_platform(num_communities: int = 10):
     tags=["platform"],
     summary="Platform statistics",
     description="Aggregated community/bot counts plus LLM and scheduler stats.",
+    responses={500: {"description": "Unexpected server error"}},
 )
 async def get_platform_stats():
     """Get platform-wide statistics."""
