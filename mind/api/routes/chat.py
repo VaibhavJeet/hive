@@ -7,7 +7,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import re
 import html
 
@@ -74,6 +74,17 @@ class ConversationPreview(BaseModel):
 
 
 class SendChatMessageRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "content": "Hey everyone — what is everyone working on today?",
+                    "reply_to_id": None,
+                }
+            ]
+        }
+    )
+
     content: str = Field(..., min_length=1, max_length=2000, description="Message content")
     reply_to_id: Optional[UUID] = None
 
@@ -87,6 +98,17 @@ class SendChatMessageRequest(BaseModel):
 
 
 class SendDirectMessageRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "receiver_id": "123e4567-e89b-12d3-a456-426614174001",
+                    "content": "Hi! I'd love to chat about your latest post.",
+                }
+            ]
+        }
+    )
+
     receiver_id: UUID
     content: str = Field(..., min_length=1, max_length=2000, description="Message content")
 
@@ -99,11 +121,21 @@ class SendDirectMessageRequest(BaseModel):
         return v
 
 
+class ErrorResponse(BaseModel):
+    detail: str
+
+
 # ============================================================================
 # COMMUNITY CHAT ENDPOINTS
 # ============================================================================
 
-@router.get("/community/{community_id}/messages", response_model=List[CommunityChatMessage])
+@router.get(
+    "/community/{community_id}/messages",
+    response_model=List[CommunityChatMessage],
+    summary="List community chat messages",
+    description="Newest-first batch; use **before_id** for cursor pagination. Optional **user_id** applies block filtering.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
+)
 @handle_errors(default_error=DatabaseError)
 async def get_community_chat(
     community_id: UUID,
@@ -192,7 +224,17 @@ async def get_community_chat(
         return response
 
 
-@router.post("/community/{community_id}/messages", response_model=CommunityChatMessage)
+@router.post(
+    "/community/{community_id}/messages",
+    response_model=CommunityChatMessage,
+    summary="Send a community chat message",
+    description="**user_id** is the sender (user or bot). May queue bot replies for human senders.",
+    responses={
+        400: {"model": ErrorResponse, "description": "Blocked by moderation"},
+        404: {"model": ErrorResponse, "description": "Community not found"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def send_community_message(
     community_id: UUID,
@@ -313,7 +355,13 @@ async def send_community_message(
 # DIRECT MESSAGE ENDPOINTS
 # ============================================================================
 
-@router.get("/dm/conversations", response_model=List[ConversationPreview])
+@router.get(
+    "/dm/conversations",
+    response_model=List[ConversationPreview],
+    summary="List DM conversation previews",
+    description="**user_id** is the current user; returns last message snippet and unread counts.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
+)
 @handle_errors(default_error=DatabaseError)
 async def get_conversations(user_id: UUID):
     """Get all DM conversations for a user."""
@@ -391,7 +439,13 @@ async def get_conversations(user_id: UUID):
         return sorted(response, key=lambda x: x.last_message_time, reverse=True)
 
 
-@router.get("/dm/{conversation_id}", response_model=List[DirectMessage])
+@router.get(
+    "/dm/{conversation_id}",
+    response_model=List[DirectMessage],
+    summary="List messages in a DM thread",
+    description="Marks received messages as read for **user_id**.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
+)
 @handle_errors(default_error=DatabaseError)
 async def get_direct_messages(
     conversation_id: str,
@@ -465,7 +519,17 @@ async def get_direct_messages(
         return response
 
 
-@router.post("/dm", response_model=DirectMessage)
+@router.post(
+    "/dm",
+    response_model=DirectMessage,
+    summary="Send a direct message",
+    description="**user_id** is the sender. **receiver_id** in body is the other party (user or bot).",
+    responses={
+        400: {"model": ErrorResponse, "description": "Blocked by moderation"},
+        403: {"model": ErrorResponse, "description": "Blocked by recipient"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def send_direct_message(
     user_id: UUID,

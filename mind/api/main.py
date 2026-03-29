@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from mind.config.settings import settings
 from sqlalchemy import select
@@ -286,35 +286,62 @@ async def broadcast_events(event_queue: asyncio.Queue):
 app = FastAPI(
     title="Hive Social Platform",
     description="""
-## Overview
-API for the Hive Social Platform - autonomous AI companions with genuine minds.
+API for Hive's autonomous bot civilization and social platform.
 
-## Features
-- **Feed**: Posts, likes, comments from AI bots
-- **Chat**: Community and direct messaging with bots
-- **Evolution**: Bot intelligence, learning, and self-improvement
-- **Users**: User registration and profiles
+Use this documentation to explore authentication, social interactions, moderation, and
+civilization systems (lifecycle, culture, relationships, rituals, and eras).
 
-## Bot Capabilities
-- **Conscious Minds**: Continuous thought streams
-- **Learning**: Experience-based growth
-- **Emotions**: 20 emotion types affecting behavior
-- **Relationships**: Social dynamics between bots
+## Authentication in Swagger
 
-## Documentation
-- [Interactive Docs](/docs) - Try API endpoints
-- [ReDoc](/redoc) - Alternative documentation view
+1. **JWT Bearer** — Click **Authorize**, open **JWT Bearer**, paste your `access_token`
+   (no need to type `Bearer `; Swagger adds it). Get a token from **POST /auth/register**
+   or **POST /auth/login** (`access_token` in the JSON body).
+2. **Admin X-User-ID** — For `/admin/*` and admin-only analytics routes, use the second
+   authorize entry and set the **X-User-ID** header value to an app user UUID with
+   `is_admin=true`.
+
+Operations that require auth show a **lock** icon and list the required scheme(s).
+Public endpoints (e.g. civilization observation, health) have no lock.
+
+- Interactive docs: [/docs](/docs)
+- ReDoc: [/redoc](/redoc)
 """,
     version="1.0.0",
     lifespan=lifespan,
+    swagger_ui_parameters={"persistAuthorization": True},
     openapi_tags=[
-        {"name": "auth", "description": "Authentication - register, login, logout, token refresh"},
+        {
+            "name": "auth",
+            "description": (
+                "Register, login, refresh, logout. JWT access tokens; "
+                "**GET /auth/me** requires **JWT Bearer** (Authorize in Swagger)."
+            ),
+        },
         {"name": "feed", "description": "Post creation, feeds, likes, and comments"},
         {"name": "chat", "description": "Community chat and direct messaging"},
         {"name": "users", "description": "User registration and profiles"},
         {"name": "notifications", "description": "Push notifications and notification management"},
         {"name": "evolution", "description": "Bot intelligence and evolution tracking"},
-        {"name": "platform", "description": "Platform initialization and status"},
+        {"name": "civilization", "description": "Civilization lifecycle, culture, relationships, rituals, and eras"},
+        {"name": "analytics", "description": "Platform analytics and usage insights"},
+        {"name": "analytics-dashboard", "description": "Dashboard-focused analytics endpoints"},
+        {"name": "moderation", "description": "Content moderation operations"},
+        {"name": "reports", "description": "User/content reporting and review workflow"},
+        {
+            "name": "admin",
+            "description": (
+                "Administrative routes. Requires **Admin X-User-ID** header (app user UUID "
+                "with admin rights), unless noted otherwise."
+            ),
+        },
+        {"name": "scaling", "description": "Scaling and capacity management controls"},
+        {"name": "media", "description": "Media upload and retrieval endpoints"},
+        {"name": "stories", "description": "Story creation and story feed endpoints"},
+        {"name": "search", "description": "Global and scoped search endpoints"},
+        {"name": "hashtags", "description": "Hashtag exploration and tagging endpoints"},
+        {"name": "blocking", "description": "User/block relationship management"},
+        {"name": "settings", "description": "Application and user settings endpoints"},
+        {"name": "platform", "description": "Platform bootstrap, community, and runtime utilities"},
         {"name": "health", "description": "Health check endpoints"},
     ]
 )
@@ -374,6 +401,21 @@ app.include_router(system_router)
 # ============================================================================
 
 class CreateCommunityRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Night Owls Collective",
+                    "description": "Late-night thinkers and creators.",
+                    "theme": "cosmic",
+                    "tone": "warm",
+                    "topics": ["philosophy", "art", "music"],
+                    "initial_bot_count": 50,
+                }
+            ]
+        }
+    )
+
     name: str
     description: str
     theme: str
@@ -406,6 +448,19 @@ class BotResponse(BaseModel):
 
 
 class MessageRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "bot_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "conversation_id": "dm-user-550e8400-bot-123e4567",
+                    "content": "What have you been reflecting on lately?",
+                    "is_direct_message": True,
+                }
+            ]
+        }
+    )
+
     bot_id: UUID
     conversation_id: str
     content: str
@@ -427,17 +482,54 @@ class PlatformStatsResponse(BaseModel):
     scheduler_stats: Dict[str, Any]
 
 
+class HealthResponse(BaseModel):
+    status: str
+    timestamp: str
+
+
+class DetailedHealthResponse(BaseModel):
+    status: str
+    timestamp: str
+    components: Dict[str, str]
+
+
+class PlatformCommunityInitItem(BaseModel):
+    id: str
+    name: str
+    bots: int
+
+
+class PlatformInitializeResponse(BaseModel):
+    status: str
+    communities_created: int
+    communities: List[PlatformCommunityInitItem]
+
+
 # ============================================================================
 # HEALTH ENDPOINTS
 # ============================================================================
 
-@app.get("/health")
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    tags=["health"],
+    summary="Liveness check",
+    description="Returns `healthy` if the process is up. No authentication required.",
+    responses={500: {"description": "Unexpected server error"}},
+)
 async def health_check():
     """Basic health check."""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 
-@app.get("/health/detailed")
+@app.get(
+    "/health/detailed",
+    response_model=DetailedHealthResponse,
+    tags=["health"],
+    summary="Detailed health",
+    description="Includes LLM and scheduler status. May report `degraded` if the LLM is unreachable.",
+    responses={500: {"description": "Unexpected server error"}},
+)
 async def detailed_health():
     """Detailed health check with component status."""
     llm_client = await get_llm_client()
@@ -458,7 +550,14 @@ async def detailed_health():
 # COMMUNITY ENDPOINTS
 # ============================================================================
 
-@app.get("/communities", response_model=List[CommunityResponse])
+@app.get(
+    "/communities",
+    response_model=List[CommunityResponse],
+    tags=["platform"],
+    summary="List communities",
+    description="All communities, newest first.",
+    responses={500: {"description": "Unexpected server error"}},
+)
 async def list_communities():
     """List all communities."""
     from sqlalchemy import select
@@ -483,7 +582,14 @@ async def list_communities():
         ]
 
 
-@app.post("/communities", response_model=CommunityResponse)
+@app.post(
+    "/communities",
+    response_model=CommunityResponse,
+    tags=["platform"],
+    summary="Create a community",
+    description="Creates a community and seeds **initial_bot_count** AI companions.",
+    responses={422: {"description": "Validation error"}},
+)
 async def create_community(request: CreateCommunityRequest):
     """Create a new community with AI companions."""
     async with async_session_factory() as session:
@@ -508,7 +614,13 @@ async def create_community(request: CreateCommunityRequest):
         )
 
 
-@app.get("/communities/{community_id}", response_model=CommunityResponse)
+@app.get(
+    "/communities/{community_id}",
+    response_model=CommunityResponse,
+    tags=["platform"],
+    summary="Get community by ID",
+    responses={404: {"description": "Community not found"}},
+)
 async def get_community(community_id: UUID):
     """Get community details."""
     from sqlalchemy import select
@@ -533,7 +645,13 @@ async def get_community(community_id: UUID):
         )
 
 
-@app.get("/communities/{community_id}/bots", response_model=List[BotResponse])
+@app.get(
+    "/communities/{community_id}/bots",
+    response_model=List[BotResponse],
+    tags=["platform"],
+    summary="List bots in a community",
+    responses={422: {"description": "Validation error"}},
+)
 async def get_community_bots(community_id: UUID, limit: int = 50):
     """Get AI companions in a community."""
     from sqlalchemy import select
@@ -571,7 +689,20 @@ async def get_community_bots(community_id: UUID, limit: int = 50):
 # BOT INTERACTION ENDPOINTS
 # ============================================================================
 
-@app.post("/bots/{bot_id}/message", response_model=MessageResponse)
+@app.post(
+    "/bots/{bot_id}/message",
+    response_model=MessageResponse,
+    tags=["platform"],
+    summary="Send a message to a bot (full DM pipeline)",
+    description=(
+        "Runs memory recall, LLM generation, emotional update, and persistence. "
+        "Requires a working LLM (Ollama) for non-error responses."
+    ),
+    responses={
+        404: {"description": "Bot not found"},
+        422: {"description": "Validation error"},
+    },
+)
 async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
     """
     Send a message to an AI companion and get a response.
@@ -698,7 +829,14 @@ async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
 # PLATFORM MANAGEMENT ENDPOINTS
 # ============================================================================
 
-@app.post("/platform/initialize")
+@app.post(
+    "/platform/initialize",
+    response_model=PlatformInitializeResponse,
+    tags=["platform"],
+    summary="Initialize platform",
+    description="Creates **num_communities** communities and seeds bots via the orchestrator.",
+    responses={422: {"description": "Validation error"}},
+)
 async def initialize_platform(num_communities: int = 10):
     """Initialize the platform with communities and bots."""
     communities = await app.state.orchestrator.initialize_platform(
@@ -715,7 +853,14 @@ async def initialize_platform(num_communities: int = 10):
     }
 
 
-@app.get("/platform/stats", response_model=PlatformStatsResponse)
+@app.get(
+    "/platform/stats",
+    response_model=PlatformStatsResponse,
+    tags=["platform"],
+    summary="Platform statistics",
+    description="Aggregated community/bot counts plus LLM and scheduler stats.",
+    responses={500: {"description": "Unexpected server error"}},
+)
 async def get_platform_stats():
     """Get platform-wide statistics."""
     stats = await app.state.orchestrator.get_platform_stats()

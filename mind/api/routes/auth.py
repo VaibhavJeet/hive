@@ -7,7 +7,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Depends, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select
 
 from mind.config.settings import settings
@@ -40,6 +40,19 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 class RegisterRequest(BaseModel):
     """User registration request."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "email": "newuser@example.com",
+                    "password": "securePassword8",
+                    "display_name": "Alex",
+                }
+            ]
+        }
+    )
+
     email: EmailStr
     password: str = Field(min_length=8, description="Password must be at least 8 characters")
     display_name: str = Field(min_length=1, max_length=100)
@@ -47,22 +60,74 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     """User login request."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"email": "alex@example.com", "password": "securePassword8"}
+            ]
+        }
+    )
+
     email: EmailStr
     password: str
 
 
 class RefreshRequest(BaseModel):
     """Token refresh request."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                }
+            ]
+        }
+    )
+
     refresh_token: str
 
 
 class LogoutRequest(BaseModel):
     """Logout request."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                }
+            ]
+        }
+    )
+
     refresh_token: str
 
 
 class AuthResponse(BaseModel):
     """Authentication response with tokens and user info."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                    "token_type": "bearer",
+                    "expires_in": 1800,
+                    "user": {
+                        "id": "550e8400-e29b-41d4-a716-446655440000",
+                        "email": "alex@example.com",
+                        "display_name": "Alex",
+                        "avatar_seed": "seed-abc",
+                        "created_at": "2026-03-01T12:00:00",
+                    },
+                }
+            ]
+        }
+    )
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -72,6 +137,22 @@ class AuthResponse(BaseModel):
 
 class UserInfoResponse(BaseModel):
     """Current user info response."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "550e8400-e29b-41d4-a716-446655440000",
+                    "email": "alex@example.com",
+                    "display_name": "Alex",
+                    "avatar_seed": "seed-abc",
+                    "created_at": "2026-03-01T12:00:00",
+                    "is_active": True,
+                }
+            ]
+        }
+    )
+
     id: UUID
     email: str
     display_name: str
@@ -85,11 +166,29 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class ErrorResponse(BaseModel):
+    """Standard error response payload."""
+    detail: str
+
+
 # ============================================================================
 # AUTH ENDPOINTS
 # ============================================================================
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new account",
+    description=(
+        "Creates a user and returns **access_token** and **refresh_token**. "
+        "Use **Authorize** in Swagger with the access token for protected routes."
+    ),
+    responses={
+        409: {"model": ErrorResponse, "description": "Email already registered"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def register(request: RegisterRequest):
     """
@@ -150,7 +249,17 @@ async def register(request: RegisterRequest):
         )
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post(
+    "/login",
+    response_model=AuthResponse,
+    summary="Login",
+    description="Returns JWT **access_token** and **refresh_token** for the given email and password.",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        403: {"model": ErrorResponse, "description": "Account is disabled"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def login(request: LoginRequest):
     """
@@ -220,7 +329,17 @@ async def login(request: LoginRequest):
         )
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post(
+    "/refresh",
+    response_model=TokenPair,
+    summary="Refresh access token",
+    description="Exchange a valid **refresh_token** for a new **access_token**.",
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid, expired, or revoked refresh token"},
+        403: {"model": ErrorResponse, "description": "Account is disabled"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def refresh_token(request: RefreshRequest):
     """
@@ -282,7 +401,13 @@ async def refresh_token(request: RefreshRequest):
         )
 
 
-@router.post("/logout", response_model=MessageResponse)
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Logout",
+    description="Revokes the given **refresh_token** so it cannot be used again.",
+    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
+)
 @handle_errors(default_error=DatabaseError)
 async def logout(request: LogoutRequest):
     """
@@ -318,7 +443,18 @@ async def logout(request: LogoutRequest):
     return MessageResponse(message="Logged out successfully")
 
 
-@router.get("/me", response_model=UserInfoResponse)
+@router.get(
+    "/me",
+    response_model=UserInfoResponse,
+    summary="Current user profile",
+    description=(
+        "Returns the authenticated app user. Requires **JWT Bearer** "
+        "(use **Authorize** with `access_token` from login/register)."
+    ),
+    responses={
+        401: {"model": ErrorResponse, "description": "Missing/invalid/expired access token"},
+    },
+)
 @handle_errors(default_error=DatabaseError)
 async def get_current_user_info(
     current_user: AuthenticatedUser = Depends(get_current_user)

@@ -30,8 +30,18 @@ from mind.core.dependencies import (
 
 logger = logging.getLogger(__name__)
 
-# HTTP Bearer scheme for extracting tokens from Authorization header
-security = HTTPBearer(auto_error=False)
+# HTTP Bearer scheme for extracting tokens from Authorization header (JWT access tokens).
+# Used by OpenAPI/Swagger: click Authorize and send `Bearer <access_token>`.
+# Tokens come from POST /auth/register or POST /auth/login.
+security = HTTPBearer(
+    scheme_name="JWT Bearer",
+    bearerFormat="JWT",
+    description=(
+        "JWT access token. Send `Authorization: Bearer <token>`. "
+        "Obtain `access_token` from **POST /auth/register** or **POST /auth/login**."
+    ),
+    auto_error=False,
+)
 
 
 # ============================================================================
