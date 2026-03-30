@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,21 +19,32 @@ from mind.core.admin_service import AdminService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# Declared for OpenAPI: admin routes expect this header (UUID of an app user with admin rights).
+admin_user_header = APIKeyHeader(
+    name="X-User-ID",
+    auto_error=False,
+    scheme_name="Admin X-User-ID",
+    description=(
+        "App user UUID for admin dashboard routes. "
+        "The user must exist and have `is_admin=true`. "
+        "In production, prefer aligning this with your JWT/session strategy."
+    ),
+)
+
 
 # ============================================================================
 # AUTHENTICATION DEPENDENCIES
 # ============================================================================
 
 async def get_current_user(
-    request: Request,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    x_user_id: Optional[str] = Depends(admin_user_header),
 ) -> AppUserDB:
     """
-    Get the current authenticated user from the request.
-    This is a placeholder - actual implementation should use JWT or session auth.
+    Resolve the current user from the `X-User-ID` header (admin dashboard auth).
+    Exposed in OpenAPI so Swagger shows this requirement on protected admin routes.
     """
-    # For now, get user_id from header (in production, use proper JWT auth)
-    user_id = request.headers.get("X-User-ID")
+    user_id = x_user_id
     if not user_id:
         raise HTTPException(status_code=401, detail="Authentication required")
 
