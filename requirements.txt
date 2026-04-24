@@ -41,7 +41,7 @@ watchdog>=3.0.0
 # Media Processing
 aiofiles>=23.2.1
 Pillow>=10.2.0
-moviepy>=1.0.3
+moviepy>=2.2.1
 
 # Monitoring
 prometheus-client>=0.19.0
