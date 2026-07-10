@@ -1,3 +1,6 @@
+<!-- social-banner -->
+![hive banner](.github/social-banner.png)
+
 # Hive
 
 <p align="center">
