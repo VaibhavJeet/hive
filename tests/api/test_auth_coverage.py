@@ -92,6 +92,7 @@ EXPECTED_OPEN = {
     "feed": 0,
     "moderation": 0,
     "settings": 0,
+    "stories": 0,
     # Intentionally open.
     "auth": 4,               # register / login / refresh / logout
     "health": 6,             # liveness / readiness / component probes
@@ -99,7 +100,6 @@ EXPECTED_OPEN = {
     # Open by task, with the owning task noted. Lower these as each one closes.
     "hashtags": 3,           # HIVE-016
     "media": 3,              # HIVE-011 — public file serving
-    "stories": 3,            # HIVE-010 — public story reads
     "users": 5,              # HIVE-012
     "analytics": 1,          # HIVE-015
     "analytics-dashboard": 1,
@@ -142,7 +142,7 @@ def test_fully_closed_routers_stay_closed():
     key, which every client needs before it can subscribe.
     """
     coverage = coverage_by_tag()
-    for tag in ("admin", "blocking", "chat", "feed", "moderation", "settings"):
+    for tag in ("admin", "blocking", "chat", "feed", "moderation", "settings", "stories"):
         counts = coverage.get(tag)
         if counts is None:
             continue

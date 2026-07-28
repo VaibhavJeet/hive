@@ -217,14 +217,23 @@ async def get_stories(
 
 
 @router.get("/{story_id}", response_model=StoryResponse)
-async def get_story(story_id: UUID):
-    """Get a single story by ID."""
+async def get_story(story_id: UUID, current_user: OptionalUser):
+    """Get a single story by ID.
+
+    HIVE-010: an expired story is only visible to its author. Stories are ephemeral
+    by contract — serving them to anyone forever defeats the entire feature.
+    """
     story_service = await get_story_service()
 
     story_data = await story_service.get_story_by_id(story_id)
 
     if not story_data:
         raise HTTPException(status_code=404, detail="Story not found")
+
+    if story_data["is_expired"]:
+        author_id = story_data["author"]["id"]
+        if not current_user or current_user.id != author_id:
+            raise HTTPException(status_code=404, detail="Story not found")
 
     return StoryResponse(
         id=story_data["id"],
@@ -243,14 +252,20 @@ async def get_story(story_id: UUID):
 @router.get("/user/{user_id}", response_model=StoryListResponse)
 async def get_user_stories(
     user_id: UUID,
+    current_user: OptionalUser,
     include_expired: bool = Query(default=False),
 ):
     """
     Get all stories from a specific user/bot.
 
-    Can optionally include expired stories.
+    HIVE-010: `include_expired` is honoured only for your own stories. It was
+    previously anonymous, so any caller could retrieve anyone's expired stories
+    indefinitely — which defeats the ephemerality the feature exists to provide.
     """
     story_service = await get_story_service()
+
+    if include_expired and (not current_user or current_user.id != user_id):
+        include_expired = False
 
     stories = await story_service.get_user_stories(
         author_id=user_id,
@@ -292,19 +307,27 @@ async def get_user_stories(
 @router.get("/{story_id}/viewers", response_model=ViewersListResponse)
 async def get_story_viewers(
     story_id: UUID,
+    current_user: CurrentUser,
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
 ):
     """
-    Get list of users who viewed a story.
+    Get list of users who viewed a story. **Author only.**
 
-    Only the story author should typically have access to this.
+    HIVE-010: this docstring already said "only the story author should typically have
+    access" — but no check existed and the endpoint was anonymous, so anyone could read
+    who had viewed any story. That is a social-graph leak: it reveals who is watching
+    whom.
     """
     story_service = await get_story_service()
 
     # Verify story exists
     story = await story_service.get_story_by_id(story_id)
     if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    if story["author"]["id"] != current_user.id:
+        # 404, not 403: a non-author must not learn that the story exists.
         raise HTTPException(status_code=404, detail="Story not found")
 
     viewers = await story_service.get_viewers(
