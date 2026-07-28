@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 137 tasks — 27 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 22 (HIVE-001…014, 028, 029, 068, 125, 129, 131, 133, 135)
+**Counts:** 138 tasks — 28 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 24 (HIVE-001…015, 028, 029, 068, 125, 129, 131, 133, 135, 138)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -732,10 +732,66 @@ intentional); require admin on every mutating route.
 `mind/api/routes/system.py` — 0 auth dependencies. `/system/status` exposes host CPU/memory/disk/network
 and service topology; `/system/logs` exposes the application log buffer to anonymous callers.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003 · **Blocks:** HIVE-066
+**AC:** no host telemetry or log content is readable without an admin token.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅ · **Blocks:** HIVE-066
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** System is **3 required / 0 open**.
+> - **`/system/logs` was the one that mattered.** Host metrics are embarrassing to leak;
+>   the log buffer is genuinely dangerous — it carries user content, bot output, and error
+>   detail including filesystem paths, and `limit` accepts up to 500 entries per call. It has
+>   its own test rather than sharing the parametrised one, because it is the highest-value
+>   target in the router.
+> - **Closed together with [HIVE-138](#hive-138--p0--the-platform-bootstrap-endpoints-were-never-audited)**,
+>   which is the more severe half and which this task surfaced.
+> - **Note for HIVE-066** (the `/logs` page ships fabricated data): the real endpoint now
+>   requires admin, so wiring that page up also needs the portal to send its token — which it
+>   does since HIVE-068. No extra work, but do not be surprised by a 401 while testing signed
+>   out.
+
+### HIVE-138 · P0 · The platform bootstrap endpoints were never audited
+**A gap in the original audit, not just in the code.** The seven `platform`-tagged endpoints are
+declared directly on `app` in `mind/api/main.py` rather than in a route module, so the initial sweep
+counted them in the coverage table but **filed no task for them**. They sat unowned through fourteen
+Epic A closures.
+
+Three were anonymous and expensive:
+
+| Endpoint | Cost per anonymous call |
+|---|---|
+| `POST /communities` | seeds up to **200 bots**, each of them LLM work |
+| `POST /platform/initialize` | default 10 communities × ~50 bots ≈ **500 generations** |
+| `POST /bots/{bot_id}/message` | memory recall + LLM generation, every call |
+
+`GET /platform/stats` additionally exposed LLM client internals and scheduler state.
+
+**Fix:** admin-gate the two bootstrap endpoints and `/platform/stats`; require a session (not admin)
+for the DM pipeline, since messaging a bot is the product; leave community browsing public.
+**AC:** no anonymous caller can create bots or invoke the LLM; community listings still answer
+anonymously.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅ · **Blocks:** —
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - **Done, AC verified.** Platform is **4 required / 3 open**; the three open are community
+>   browsing, which backs both the portal and the mobile discovery screen.
+> - 🔴 **`POST /platform/initialize` was the single cheapest denial-of-service in the codebase.** One
+>   unauthenticated POST, no body required, ≈500 bot generations queued against Ollama plus the
+>   matching database writes. Repeatable.
+> - **Why the audit missed it, and the general lesson:** I enumerated tasks per *route module*, and
+>   these endpoints live in `main.py`. Anything not organised the way the audit was organised is
+>   invisible to it. The coverage table saw them because it walks the live route tree — **structure-
+>   derived checks caught what a file-by-file review did not**, which is the same reason
+>   `test_route_table.py` found four dead endpoints nobody had noticed.
+> - **Worth one deliberate sweep for the same shape elsewhere:** logic that lives outside the
+>   directory convention it belongs to. `main.py` also holds both WebSocket endpoints (HIVE-017,
+>   HIVE-018 — still open) and the rate limiter (HIVE-026), none of which are in a module either.
+> - **The DM pipeline is session-gated, not admin-gated**, with a test asserting a signed-in
+>   non-admin is *not* refused. Over-gating it would have been the easy mistake — it is the one
+>   endpoint here that ordinary users are supposed to call.
 
 ### HIVE-016 · P0 · Rate-limit and gate `search` + `hashtags` (12 endpoints)
 `mind/api/routes/search.py`, `mind/api/routes/hashtags.py` — 0 auth dependencies. Unbounded anonymous
