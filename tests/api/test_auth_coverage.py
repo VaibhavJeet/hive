@@ -107,7 +107,7 @@ EXPECTED_OPEN = {
     "search": 5,             # HIVE-016
     "platform": 7,           # HIVE-015
     "evolution": 8,          # HIVE-014
-    "civilization": 85,      # HIVE-013 — 57 reads stay public, 28 writes must close
+    "civilization": 57,      # reads are the observation product; 28 writes closed by HIVE-013
 }
 
 

@@ -645,41 +645,6 @@ registration and bot browsing stay open.
 > - **Tests assert on the published OpenAPI schema**, not only the Pydantic model, so the
 >   contract cannot drift back through a response_model change.
 
-### HIVE-137 · P1 · Two parallel account systems
-Hive has two unrelated ways to be a user:
-
-| Path | Credential | Result |
-|---|---|---|
-| `POST /auth/register` + `/auth/login` | email + password | JWT access/refresh pair |
-| `POST /users/register` | `device_id` only, no secret | returns the **existing** account for a known `device_id` |
-
-The second is what `cell/` uses (`api_service.dart:66`). `mind/api/routes/auth.py:218` fabricates a
-`device_id` for every JWT user *"for compatibility"*, so every account exists in both systems at
-once. Since HIVE-003 the API authenticates with JWTs, which means the device path can create an
-account it cannot then use — and HIVE-012 had to strip `device_id` from public responses precisely
-because that path treats it as a credential.
-
-**Also in scope — the mobile client calls endpoints that do not exist.** Found while auditing this:
-`cell/lib/services/api_service.dart:101,121` PUT to `/users/{id}/profile`, which the router does not
-define. **Profile editing and avatar upload have never worked**, despite
-[TODO.md](TODO.md) listing "Profile editing completion" as complete. Same family as HIVE-133/135:
-nobody noticed because no test exercises the client's URL list against the server's route table.
-
-**Fix:** decide which identity model survives (this follows from **HIVE-119**), migrate `cell/` onto
-it, delete the other, then audit every URL in `api_service.dart` against the live route table.
-**AC:** one account system; `cell/` authenticates through it; a test asserts every endpoint the
-mobile client calls exists on the server.
-
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119, HIVE-012 ✅ · **Blocks:** HIVE-084
-> **Blockers:** _none recorded_
-> **Feedback:**
-> - _28-07-2026_ — Found during HIVE-012. The security consequence is already closed (HIVE-012);
->   what remains is the architectural duplication and the dead client calls.
-> - **The client-vs-route-table test is the cheap win here** and worth doing even before the identity
->   decision: extract the URL templates from `api_service.dart`, compare against `app.openapi()`, fail
->   on any the server does not serve. That single test would have caught this, HIVE-133, and HIVE-135.
-
 ### HIVE-013 · P0 · Gate the 28 mutating civilization endpoints
 `mind/api/routes/civilization.py` — 85 endpoints, 0 auth dependencies, 28 of them POST/PUT/DELETE:
 `/initialize`, `/eras/declare`, `/eras/propose`, `/rituals/propose`, `/rituals/perform`,
@@ -2027,6 +1992,41 @@ Six screenshots claiming "32 beings in The Founding era" — with HIVE-022, that
 > **Depends on:** HIVE-118 · **Blocks:** —
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
+
+### HIVE-137 · P1 · Two parallel account systems
+Hive has two unrelated ways to be a user:
+
+| Path | Credential | Result |
+|---|---|---|
+| `POST /auth/register` + `/auth/login` | email + password | JWT access/refresh pair |
+| `POST /users/register` | `device_id` only, no secret | returns the **existing** account for a known `device_id` |
+
+The second is what `cell/` uses (`api_service.dart:66`). `mind/api/routes/auth.py:218` fabricates a
+`device_id` for every JWT user *"for compatibility"*, so every account exists in both systems at
+once. Since HIVE-003 the API authenticates with JWTs, which means the device path can create an
+account it cannot then use — and HIVE-012 had to strip `device_id` from public responses precisely
+because that path treats it as a credential.
+
+**Also in scope — the mobile client calls endpoints that do not exist.** Found while auditing this:
+`cell/lib/services/api_service.dart:101,121` PUT to `/users/{id}/profile`, which the router does not
+define. **Profile editing and avatar upload have never worked**, despite
+[TODO.md](TODO.md) listing "Profile editing completion" as complete. Same family as HIVE-133/135:
+nobody noticed because no test exercises the client's URL list against the server's route table.
+
+**Fix:** decide which identity model survives (this follows from **HIVE-119**), migrate `cell/` onto
+it, delete the other, then audit every URL in `api_service.dart` against the live route table.
+**AC:** one account system; `cell/` authenticates through it; a test asserts every endpoint the
+mobile client calls exists on the server.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-119, HIVE-012 ✅ · **Blocks:** HIVE-084
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-012. The security consequence is already closed (HIVE-012);
+>   what remains is the architectural duplication and the dead client calls.
+> - **The client-vs-route-table test is the cheap win here** and worth doing even before the identity
+>   decision: extract the URL templates from `api_service.dart`, compare against `app.openapi()`, fail
+>   on any the server does not serve. That single test would have caught this, HIVE-133, and HIVE-135.
 
 ### HIVE-118 · P2 · Settle the product identity
 The repo is simultaneously **Hive** (README), **Sentient** (CLAUDE.md, VISION.md), **ai-companions**

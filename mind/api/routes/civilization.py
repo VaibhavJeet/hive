@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_
 
@@ -40,6 +40,13 @@ from mind.civilization.config import (
     get_civilization_config, get_config_manager, CivilizationConfig
 )
 
+from mind.api.routes.admin import require_admin
+from mind.core.database import AppUserDB
+
+# HIVE-013: the 57 read endpoints below stay public — this is an observation portal and
+# VISION.md is explicit that watching is the point. Every mutating endpoint is
+# admin-gated: they rewrite civilization history (eras, rituals, beliefs), reset its
+# configuration, or spend LLM tokens on demand.
 router = APIRouter(prefix="/civilization", tags=["civilization"])
 
 
@@ -762,7 +769,8 @@ async def record_life_event(
     bot_id: UUID,
     event: str,
     impact: str = "positive",
-    details: str = ""
+    details: str = "",
+    admin: AppUserDB = Depends(require_admin),
 ):
     """Record a life event for a bot."""
     lifecycle_manager = get_lifecycle_manager()
@@ -774,7 +782,8 @@ async def record_life_event(
 async def create_artifact(
     bot_id: UUID,
     inspiration: str,
-    artifact_type: str = "saying"
+    artifact_type: str = "saying",
+    admin: AppUserDB = Depends(require_admin),
 ):
     """Have a bot create a cultural artifact."""
     culture_engine = get_culture_engine()
@@ -856,7 +865,9 @@ async def get_mentorship_candidates(elder_id: UUID):
 
 
 @router.post("/elders/{elder_id}/origin-story")
-async def tell_origin_story(elder_id: UUID, audience_ids: List[UUID]):
+async def tell_origin_story(elder_id: UUID, audience_ids: List[UUID],
+    admin: AppUserDB = Depends(require_admin),
+):
     """Have an elder tell a story about the early days."""
     elder_wisdom = get_elder_wisdom()
     story = await elder_wisdom.tell_origin_story(elder_id, audience_ids)
@@ -888,7 +899,9 @@ async def get_upcoming_rituals():
 
 
 @router.post("/rituals/remembrance")
-async def hold_remembrance_ritual(participant_ids: List[UUID]):
+async def hold_remembrance_ritual(participant_ids: List[UUID],
+    admin: AppUserDB = Depends(require_admin),
+):
     """Hold a remembrance ritual for the departed."""
     rituals = get_rituals_system()
     result = await rituals.hold_remembrance(participant_ids)
@@ -896,7 +909,9 @@ async def hold_remembrance_ritual(participant_ids: List[UUID]):
 
 
 @router.post("/rituals/welcome")
-async def hold_welcome_ceremony(newborn_id: UUID, welcomer_ids: List[UUID]):
+async def hold_welcome_ceremony(newborn_id: UUID, welcomer_ids: List[UUID],
+    admin: AppUserDB = Depends(require_admin),
+):
     """Hold a welcome ceremony for a newborn bot."""
     rituals = get_rituals_system()
     result = await rituals.hold_welcome_ceremony(newborn_id, welcomer_ids)
@@ -904,7 +919,9 @@ async def hold_welcome_ceremony(newborn_id: UUID, welcomer_ids: List[UUID]):
 
 
 @router.post("/rituals/elder-council")
-async def hold_elder_council(elder_ids: List[UUID], topic: str = "the state of the civilization"):
+async def hold_elder_council(elder_ids: List[UUID], topic: str = "the state of the civilization",
+    admin: AppUserDB = Depends(require_admin),
+):
     """Hold an elder council to discuss important matters."""
     rituals = get_rituals_system()
     result = await rituals.hold_elder_council(elder_ids, topic)
@@ -912,7 +929,9 @@ async def hold_elder_council(elder_ids: List[UUID], topic: str = "the state of t
 
 
 @router.post("/rituals/storytelling")
-async def hold_storytelling_gathering(storyteller_id: UUID, audience_ids: List[UUID]):
+async def hold_storytelling_gathering(storyteller_id: UUID, audience_ids: List[UUID],
+    admin: AppUserDB = Depends(require_admin),
+):
     """Hold a storytelling gathering."""
     rituals = get_rituals_system()
     result = await rituals.hold_storytelling_gathering(storyteller_id, audience_ids)
@@ -1000,7 +1019,7 @@ async def get_cultural_context(bot_id: UUID):
     ),
     responses={500: {"model": ErrorResponse, "description": "Initialization failed"}},
 )
-async def initialize_civilization():
+async def initialize_civilization(admin: AppUserDB = Depends(require_admin)):
     """
     Initialize the civilization system for all existing bots.
 
@@ -1017,7 +1036,9 @@ async def initialize_civilization():
 
 
 @router.post("/bots/{bot_id}/initialize")
-async def initialize_single_bot(bot_id: UUID):
+async def initialize_single_bot(bot_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Initialize a single bot into the civilization."""
     initializer = get_civilization_initializer()
     result = await initializer.initialize_single_bot(bot_id)
@@ -1126,7 +1147,9 @@ async def get_all_family_trees():
 # ============================================================================
 
 @router.post("/bots/{bot_id}/connect/{other_bot_id}")
-async def form_connection(bot_id: UUID, other_bot_id: UUID, context: str):
+async def form_connection(bot_id: UUID, other_bot_id: UUID, context: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Form a connection between two bots based on an interaction.
 
@@ -1138,7 +1161,9 @@ async def form_connection(bot_id: UUID, other_bot_id: UUID, context: str):
 
 
 @router.post("/bots/{bot_id}/reflect-connection/{other_bot_id}")
-async def reflect_on_connection(bot_id: UUID, other_bot_id: UUID, new_interaction: str):
+async def reflect_on_connection(bot_id: UUID, other_bot_id: UUID, new_interaction: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bot reflects on an existing connection after a new interaction.
 
@@ -1383,7 +1408,8 @@ async def get_relationship_detail(bot_id_1: UUID, bot_id_2: UUID):
 async def perceive_happening(
     occurrence: str,
     involved_bots: List[UUID] = [],
-    metadata: dict = {}
+    metadata: dict = {},
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Process a happening and let bots determine if it's significant.
@@ -1425,7 +1451,9 @@ async def collective_remembrance(event_name: str):
 
 
 @router.post("/bots/{bot_id}/reflect-on-event")
-async def bot_reflects_on_event(bot_id: UUID, event: dict):
+async def bot_reflects_on_event(bot_id: UUID, event: dict,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Let a specific bot reflect on an event."""
     events = get_events_manager()
     return await events.reflect_on_event(bot_id, event)
@@ -1443,7 +1471,9 @@ async def get_collective_mood():
 # ============================================================================
 
 @router.post("/bots/{bot_id}/reflect-on-purpose")
-async def reflect_on_purpose(bot_id: UUID):
+async def reflect_on_purpose(bot_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bot reflects on their purpose and identity.
 
@@ -1454,7 +1484,9 @@ async def reflect_on_purpose(bot_id: UUID):
 
 
 @router.post("/bots/{bot_id}/receive-recognition")
-async def receive_recognition(bot_id: UUID, from_bot_id: UUID, context: str):
+async def receive_recognition(bot_id: UUID, from_bot_id: UUID, context: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bot receives recognition from another bot.
 
@@ -1494,7 +1526,8 @@ async def get_civilization_identities():
 async def propose_ritual(
     proposer_id: UUID,
     occasion: str,
-    participants: List[UUID]
+    participants: List[UUID],
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     A bot proposes a new ritual for an occasion.
@@ -1509,7 +1542,8 @@ async def propose_ritual(
 async def perform_ritual(
     ritual_name: str,
     participants: List[UUID],
-    context: str = ""
+    context: str = "",
+    admin: AppUserDB = Depends(require_admin),
 ):
     """Perform a ritual with participants."""
     rituals = get_emergent_rituals_system()
@@ -1548,7 +1582,9 @@ async def get_ritual_history(
 
 
 @router.post("/rituals/{ritual_name}/evolve")
-async def evolve_ritual(ritual_name: str, context: str):
+async def evolve_ritual(ritual_name: str, context: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Let a ritual evolve based on practice.
 
@@ -1574,7 +1610,9 @@ async def sense_era_state():
 
 
 @router.post("/eras/propose")
-async def propose_new_era(proposer_id: UUID, reason: str):
+async def propose_new_era(proposer_id: UUID, reason: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     A bot proposes that a new era has begun.
 
@@ -1585,7 +1623,9 @@ async def propose_new_era(proposer_id: UUID, reason: str):
 
 
 @router.post("/eras/declare")
-async def declare_new_era(era_vision: dict):
+async def declare_new_era(era_vision: dict,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Officially declare a new era after consensus is reached.
 
@@ -1627,7 +1667,7 @@ async def get_era_transition_status():
 
 
 @router.post("/eras/check-transition")
-async def check_automated_transition():
+async def check_automated_transition(admin: AppUserDB = Depends(require_admin)):
     """
     Manually trigger an automated era transition check.
 
@@ -1663,7 +1703,9 @@ async def get_civilization_metrics():
 # ============================================================================
 
 @router.post("/bots/{bot_id}/form-belief")
-async def form_belief(bot_id: UUID, experience: str):
+async def form_belief(bot_id: UUID, experience: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bot forms a belief from an experience.
 
@@ -1675,7 +1717,9 @@ async def form_belief(bot_id: UUID, experience: str):
 
 
 @router.post("/bots/{bot_id}/share-belief/{listener_id}")
-async def share_belief(bot_id: UUID, listener_id: UUID):
+async def share_belief(bot_id: UUID, listener_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     One bot shares a belief with another.
 
@@ -1686,7 +1730,9 @@ async def share_belief(bot_id: UUID, listener_id: UUID):
 
 
 @router.post("/bots/{bot_id}/create-expression")
-async def create_expression(bot_id: UUID, inspiration: str):
+async def create_expression(bot_id: UUID, inspiration: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bot creates a cultural expression/artifact.
 
@@ -1697,7 +1743,9 @@ async def create_expression(bot_id: UUID, inspiration: str):
 
 
 @router.post("/culture/recognize-pattern")
-async def recognize_pattern(observer_ids: List[UUID], observations: str):
+async def recognize_pattern(observer_ids: List[UUID], observations: str,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Bots collectively recognize a cultural pattern/movement.
 
@@ -2083,7 +2131,9 @@ async def get_config():
 
 
 @router.put("/config", response_model=CivilizationConfigResponse)
-async def update_config(request: ConfigUpdateRequest):
+async def update_config(request: ConfigUpdateRequest,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Update civilization configuration.
 
@@ -2151,7 +2201,7 @@ async def update_config(request: ConfigUpdateRequest):
 
 
 @router.post("/config/reset")
-async def reset_config():
+async def reset_config(admin: AppUserDB = Depends(require_admin)):
     """
     Reset civilization configuration to defaults.
 
@@ -2375,6 +2425,7 @@ async def execute_fof_migration(
     bot_id: UUID,
     target_community_id: UUID = Query(..., description="Target community to migrate to"),
     leave_old_community: bool = Query(default=False, description="Whether to leave a current community"),
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Execute a cross-community migration for a bot via friend-of-friend connections.
