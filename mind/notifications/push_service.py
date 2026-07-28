@@ -636,9 +636,29 @@ class PushService:
             existing_result = await session.execute(existing_stmt)
             existing = existing_result.scalar_one_or_none()
 
-            if existing:
-                # Update existing subscription
+            if existing and existing.user_id != user_id:
+                # HIVE-009: this row belongs to someone else. The previous code
+                # reassigned `user_id` on an endpoint-only match, so submitting another
+                # user's endpoint silently took over their subscription — the victim
+                # stopped receiving push notifications and the attacker's went to the
+                # victim's device.
+                #
+                # A transfer is legitimate on a shared device, but only if the caller
+                # can present the subscription's own keys, which the browser hands out
+                # to the origin. Endpoint alone is not proof of control.
+                if not keys or keys != (existing.keys or {}):
+                    logger.warning(
+                        "Rejected push subscription takeover: endpoint already "
+                        f"registered to another user, keys did not match (user {user_id})"
+                    )
+                    raise PermissionError(
+                        "This push endpoint is registered to another account"
+                    )
                 existing.user_id = user_id
+                existing.keys = keys
+                logger.info(f"Transferred push subscription to user {user_id}")
+            elif existing:
+                # Same user re-registering the same device: refresh the keys.
                 existing.keys = keys
                 logger.info(f"Updated push subscription for user {user_id}")
             else:

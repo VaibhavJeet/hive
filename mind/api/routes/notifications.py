@@ -256,13 +256,18 @@ async def subscribe_to_push(
             detail="Subscription keys must contain 'p256dh' and 'auth'"
         )
 
-    await push_service.register_device(
-        user_id=current_user.id,
-        subscription={
-            "endpoint": request.endpoint,
-            "keys": request.keys,
-        },
-    )
+    try:
+        await push_service.register_device(
+            user_id=current_user.id,
+            subscription={
+                "endpoint": request.endpoint,
+                "keys": request.keys,
+            },
+        )
+    except PermissionError as exc:
+        # The endpoint is registered to another account and the caller could not
+        # present its keys — see HIVE-009.
+        raise HTTPException(status_code=403, detail=str(exc))
 
     return PushSubscriptionResponse(
         success=True,
