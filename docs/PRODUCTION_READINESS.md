@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 30 (HIVE-001…021, 028, 029, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 33 (HIVE-001…024, 028, 029, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 3/15**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -974,10 +974,29 @@ float and add whole days when it crosses 1.0.
 **AC:** a test asserts that 24 hourly aging cycles at `time_scale=7.0` advance a bot by exactly 7
 virtual days.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** HIVE-027, HIVE-059, HIVE-092, HIVE-116
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** A test walks a bot `young → mature → elder → ancient` and pins the
+>   **~521 real days** a full lifespan takes at the default config. 16 tests; 8 fail against
+>   unpatched code.
+> - **The migration is its own proof.** Every existing `virtual_age_days` is 0, so the
+>   Integer→Float cast is lossless — which is only true because **no bot has ever aged**. If the
+>   feature had ever worked, this migration would have needed care.
+> - **Widened `death_age` too**, which the task did not mention. It is assigned directly from
+>   `virtual_age_days`, so leaving it Integer would have reintroduced truncation at the one moment
+>   that matters most — recording how long a bot actually lived.
+> - **Display sites now format to one decimal.** Life-event text like "Passed on after
+>   {age} virtual days" would otherwise render `7.291666666666667`.
+> - 🪤 **A test of mine was wrong first, again.** I asserted a bot reaches `ancient` within one
+>   simulated year; the boundary is 3650 virtual days, so it stops at `elder`. The failure was the
+>   test misjudging the timescale, not the code. **That is twice this session** (see HIVE-028)
+>   that investigating a red test rather than relaxing the assertion produced the better outcome —
+>   here, a test that documents the real lifespan duration.
+> - **Note for HIVE-092** (no population ceiling): aging now actually reaches the `ancient` stage,
+>   which is what gates `solo_legacy` and elder-triggered reproduction. **Reproduction paths that
+>   have never fired will start firing.** Do HIVE-092 before running this anywhere long-lived.
 
 ### HIVE-023 · P0 · `demo_mode` is wired to a setting that does not exist
 `mind/engine/activity_engine.py:263` — `settings.DEMO_MODE if hasattr(settings, 'DEMO_MODE') else False`.
@@ -986,10 +1005,22 @@ silently and permanently `False`, so the civilization loop's fast path (1 min vs
 2 hr culture) is unreachable — and it was the only thing masking HIVE-022 in testing.
 **Fix:** read `settings.AUTHENTICITY_DEMO_MODE` directly; drop the `hasattr`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** `_initialize_loops` reads `settings.AUTHENTICITY_DEMO_MODE`; a test
+>   asserts the `hasattr` guard is gone and that `settings.DEMO_MODE` genuinely does not exist.
+> - **The `hasattr` guard is the actual defect, not the typo.** A bare `settings.DEMO_MODE` would
+>   have raised `AttributeError` on the first boot and been fixed in minutes. Wrapping it in
+>   `hasattr(...) else False` converted a loud failure into a silent permanent `False` — and that
+>   silence is what hid **HIVE-022** for four months, because demo mode is the one configuration
+>   where aging would have visibly worked.
+> - **Worth generalising:** `hasattr`/`getattr` defaults on *your own* settings object are almost
+>   always wrong. They are for foreign objects whose shape you do not control; on a Pydantic
+>   settings class the field either exists or the code is broken. Worth grepping for the pattern —
+>   `mind/api/main.py` had the same shape at `getattr(app.state, "scheduler", None)`, though that
+>   one is legitimate.
 
 ### HIVE-024 · P0 · In-place JSON mutations are silently discarded
 `mind/civilization/lifecycle.py:178, 256, 371` append to `lifecycle.life_events`, which is a plain
@@ -1002,10 +1033,26 @@ Same exposure on `relationships` (`models.py:68`) and `roles` (`models.py:72`).
 column for the same pattern.
 **AC:** a test appends a life event, commits, re-reads in a new session, and finds it.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** HIVE-059, HIVE-086
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** `life_events`, `relationships`, `roles`, `inherited_traits` and
+>   `mutations` are `MutableList`/`MutableDict`. Appending a life event is now observable; 6 of
+>   the 16 tests fail against the plain-`JSON` version.
+> - **This bug and HIVE-022 concealed each other.** Aging never ran, so no life events were
+>   written, so nobody noticed they would not have persisted. Fixing either alone would have
+>   produced a feature that *looks* fixed — bots aging with an empty history — which is worse than
+>   a feature visibly not working.
+> - **Scanned for other cases rather than converting everything.** A scan for in-place mutation
+>   (`.append/.update/.pop` and subscript assignment) against every JSON-mapped column across
+>   `mind/` found **9 hits, all on dataclasses** (`BotGrowthState`, `BotIdentity`,
+>   `EligibilityResult`) rather than mapped columns. So `life_events` was the only live instance;
+>   the other four columns were converted defensively because they are documented as accumulating.
+> - **This substantially answers [HIVE-086](#hive-086--p1--audit-every-json-column-for-the-hive-024-mutation-bug)**
+>   — the audit it asks for is the scan above, and it came back clean. What remains there is
+>   deciding whether `mind/core/database.py`'s JSON columns should be mutable-tracked
+>   pre-emptively; today none of them are mutated in place.
 
 ### HIVE-025 · P1 · Operator-precedence bug in self-coded module compilation
 `mind/engine/bot_self_coding.py:184` —
