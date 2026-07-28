@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 138 tasks — 28 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 24 (HIVE-001…015, 028, 029, 068, 125, 129, 131, 133, 135, 138)
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 25 (HIVE-001…016, 028, 029, 068, 125, 129, 131, 133, 135, 138)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -797,10 +797,70 @@ anonymously.
 `mind/api/routes/search.py`, `mind/api/routes/hashtags.py` — 0 auth dependencies. Unbounded anonymous
 full-text search is a cheap DoS against Postgres.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** no anonymous caller can run a full-text search; no user input can produce an invalid
+tsquery.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-139
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Search is **5 required / 0 open**; hashtags is **4 required /
+>   2 open**, the two being trending and tag feeds — browse surfaces, not search.
+> - 🐛 **`_prepare_query` sanitised nothing, and that was a live 500.** Its docstring said
+>   *"Remove special characters that could break tsquery"*; the implementation split on
+>   whitespace and appended `:*`. So `foo!` became `foo!:*`, `to_tsquery` raised a syntax
+>   error, and **any search containing punctuation returned 500**. Not SQL injection — the
+>   value is bound — but user input was being parsed as tsquery *grammar*.
+> - **This is the third instance of the HIVE-010 pattern** (docstring asserts a safety
+>   property no code implements), after `get_story_viewers` and `blocking.py`'s
+>   `verify_admin`. At this point it is a reliable smell in this codebase rather than a
+>   coincidence.
+> - **Allowlist, not denylist.** I strip to `[\w\s-]` rather than removing the operators I
+>   know about, so a character nobody considered cannot reach the parser. Terms must contain
+>   a word character (`--` is not a search term) and are capped at 10, since each is another
+>   AND clause evaluated per row while the index is unused.
+> - 🔴 **The real DoS is worse than the task described, and is now
+>   [HIVE-139](#hive-139--p1--the-full-text-search-index-is-never-populated).** Gating helps,
+>   but every search is still a sequential scan: `search_vector` is never written, so
+>   `COALESCE(p.search_vector, to_tsvector('english', p.content))` computes a tsvector **per
+>   row** and the GIN indexes are dead weight. Rate limiting a query that scans the whole
+>   posts table only slows the bleeding.
+> - **Mechanical note for future bulk edits.** `CurrentUser` is a bare `Annotated` alias with
+>   no default, so it cannot be appended after defaulted parameters — the first attempt
+>   failed to compile on every handler. `x: AuthenticatedUser = Depends(get_current_user)` is
+>   the form that appends safely; the `Annotated` alias is for hand-written signatures where
+>   it can go first.
+
+### HIVE-139 · P1 · The full-text search index is never populated
+`mind/core/database.py:110,458` declare `search_vector` TSVECTOR columns on `bot_profiles` and
+`posts`, and the initial migration creates **GIN indexes** on both. Nothing ever writes them.
+
+- `mind/search/indexer.py` has the code to populate them — and is **never called**. It is imported
+  only by `mind/search/__init__.py` (one of the effectively-dead modules from the original audit).
+- Its own docstring (`indexer.py:29`) claims *"The search_vector columns are automatically updated
+  via database triggers"*. **No trigger exists** — `grep TRIGGER alembic/versions/` returns nothing.
+
+So `search_vector` is permanently NULL, and every query runs
+`COALESCE(p.search_vector, to_tsvector('english', p.content))` — computing a tsvector **per row**,
+over the whole table, with the GIN index unusable. The indexes cost write throughput and disk while
+providing nothing.
+
+**Fix:** add a trigger (or a generated column) that maintains `search_vector` on insert/update,
+backfill existing rows, then drop the `COALESCE` fallback so a regression fails loudly instead of
+silently degrading to a scan. Delete `indexer.py` or wire it up — do not leave a third option.
+**AC:** `EXPLAIN` on a post search shows an index scan; the `COALESCE` fallback is gone.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-016 ✅ · **Blocks:** —
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-016. Gating search bounds *who* can trigger the scan; it does
+>   not stop it being a scan.
+> - **The `COALESCE` is what hid this.** Search works correctly, so nothing looks broken — it is
+>   merely O(table) per query. A missing index that produced wrong answers would have been found in
+>   March; one that produces right answers slowly survived a "100% complete" sign-off.
+> - **Needs a migration**, so fold in the partial unique index deferred from HIVE-008
+>   (`(bot_id, reporter_id) WHERE status = 'pending'`) rather than raising two.
 
 ### HIVE-017 · P0 · Authenticate the user WebSocket
 `mind/api/main.py:934-1047` — `/ws/{client_id}` accepts any `client_id` with no handshake auth, then
