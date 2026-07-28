@@ -253,6 +253,33 @@ class CalculatorSkill(Skill):
                     error="Invalid characters in expression"
                 )
 
+            # HIVE-034: bound the expression before evaluating it. `2**9**9**9` is a
+            # handful of characters that pins a CPU core for effectively forever, and
+            # this runs on the event loop — one such call stalls every other request in
+            # the worker. Length and exponent caps are cruder than a real parser but
+            # they close the hole without pulling in a dependency.
+            if len(expression) > 200:
+                return SkillResult(
+                    success=False, error="Expression too long (max 200 characters)"
+                )
+
+            # At most ONE exponentiation. Chained powers compound: `9^9^9` is
+            # 9**(9**9), whose exponents are individually small but whose result is
+            # astronomically large — my first version capped each exponent and still
+            # hung on exactly that input.
+            if expression.count("^") + expression.count("**") > 1:
+                return SkillResult(
+                    success=False,
+                    error="Chained exponentiation is not supported (max 1)",
+                )
+
+            for exponent in re.findall(r"\^\s*(\d+)|\*\*\s*(\d+)", expression):
+                value = next((int(v) for v in exponent if v), 0)
+                if value > 100:
+                    return SkillResult(
+                        success=False, error="Exponent too large (max 100)"
+                    )
+
             # Replace ^ with ** for exponentiation
             expr = expression.replace("^", "**")
 

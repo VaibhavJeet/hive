@@ -14,6 +14,8 @@ import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID
 
@@ -155,7 +157,7 @@ class MemoryDecayManager:
                 result = await session.execute(stmt)
                 memories = result.scalars().all()
 
-                now = datetime.utcnow()
+                now = utcnow()
 
                 for memory in memories:
                     stats["memories_processed"] += 1
@@ -219,7 +221,7 @@ class MemoryDecayManager:
         try:
             async with async_session_factory() as session:
                 # Get old memories eligible for consolidation
-                cutoff_date = datetime.utcnow() - timedelta(days=self.config.consolidation_age_days)
+                cutoff_date = utcnow() - timedelta(days=self.config.consolidation_age_days)
 
                 stmt = (
                     select(MemoryItemDB)
@@ -358,14 +360,14 @@ class MemoryDecayManager:
 
                 for memory in to_forget:
                     # Additional checks before forgetting
-                    days_old = (datetime.utcnow() - memory.created_at).total_seconds() / 86400
+                    days_old = (utcnow() - memory.created_at).total_seconds() / 86400
 
                     # Don't forget very recent memories regardless of importance
                     if days_old < 1:
                         continue
 
                     # Don't forget if accessed recently
-                    days_since_access = (datetime.utcnow() - memory.last_accessed).total_seconds() / 86400
+                    days_since_access = (utcnow() - memory.last_accessed).total_seconds() / 86400
                     if days_since_access < 2:
                         continue
 
@@ -408,7 +410,7 @@ class MemoryDecayManager:
                 if memory:
                     memory.importance = min(1.0, memory.importance + boost)
                     memory.access_count += 1
-                    memory.last_accessed = datetime.utcnow()
+                    memory.last_accessed = utcnow()
                     await session.commit()
                     return True
 
@@ -446,7 +448,7 @@ class MemoryDecayManager:
                         "id": str(mem.id),
                         "content": mem.content,
                         "importance": mem.importance,
-                        "days_old": (datetime.utcnow() - mem.created_at).days,
+                        "days_old": (utcnow() - mem.created_at).days,
                         "access_count": mem.access_count
                     }
                     for mem in memories
@@ -462,7 +464,7 @@ class MemoryDecayManager:
         if not last_run:
             return True
 
-        hours_since = (datetime.utcnow() - last_run).total_seconds() / 3600
+        hours_since = (utcnow() - last_run).total_seconds() / 3600
         return hours_since >= interval_hours
 
 

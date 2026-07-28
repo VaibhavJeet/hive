@@ -3,6 +3,8 @@ User API routes - User registration and profile management.
 """
 
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -10,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from mind.api.dependencies import CurrentUser
 from mind.core.database import async_session_factory, AppUserDB, BotProfileDB, CommunityDB, PostDB, PostCommentDB
 from sqlalchemy import func
 from mind.core.errors import NotFoundError, DatabaseError
@@ -29,11 +32,21 @@ class RegisterUserRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
+    """Public view of a user. Deliberately excludes `device_id`.
+
+    HIVE-012: `device_id` is the sole credential for the device-identity path —
+    `POST /users/register` returns an existing account when handed a known one. Echoing
+    it from an anonymous profile read handed out that credential to anybody who asked.
+    """
     id: UUID
-    device_id: str
     display_name: str
     avatar_seed: str
     created_at: datetime
+
+
+class RegisteredUserResponse(UserResponse):
+    """Registration response. Includes `device_id` because the caller just supplied it."""
+    device_id: str
 
 
 class BotProfileResponse(BaseModel):
@@ -192,7 +205,7 @@ async def get_bot_profile(bot_id: UUID):
 # USER ENDPOINTS
 # ============================================================================
 
-@router.post("/register", response_model=UserResponse)
+@router.post("/register", response_model=RegisteredUserResponse)
 @handle_errors(default_error=DatabaseError)
 async def register_user(request: RegisterUserRequest):
     """Register a new user or return existing user."""
@@ -203,7 +216,7 @@ async def register_user(request: RegisterUserRequest):
         existing = result.scalar_one_or_none()
 
         if existing:
-            return UserResponse(
+            return RegisteredUserResponse(
                 id=existing.id,
                 device_id=existing.device_id,
                 display_name=existing.display_name,
@@ -221,7 +234,7 @@ async def register_user(request: RegisterUserRequest):
         await session.commit()
         await session.refresh(user)
 
-        return UserResponse(
+        return RegisteredUserResponse(
             id=user.id,
             device_id=user.device_id,
             display_name=user.display_name,
@@ -232,8 +245,13 @@ async def register_user(request: RegisterUserRequest):
 
 @router.get("/{user_id}", response_model=UserResponse)
 @handle_errors(default_error=DatabaseError)
-async def get_user(user_id: UUID):
-    """Get user profile."""
+async def get_user(user_id: UUID, current_user: CurrentUser):
+    """Get a user's public profile.
+
+    HIVE-012: requires a session. On a platform with direct messages, letting anyone
+    enumerate accounts by UUID is a needless disclosure — and this response used to
+    carry `device_id`.
+    """
     async with async_session_factory() as session:
         stmt = select(AppUserDB).where(AppUserDB.id == user_id)
         result = await session.execute(stmt)
@@ -244,7 +262,6 @@ async def get_user(user_id: UUID):
 
         return UserResponse(
             id=user.id,
-            device_id=user.device_id,
             display_name=user.display_name,
             avatar_seed=user.avatar_seed,
             created_at=user.created_at
@@ -253,8 +270,17 @@ async def get_user(user_id: UUID):
 
 @router.put("/{user_id}")
 @handle_errors(default_error=DatabaseError)
-async def update_user(user_id: UUID, display_name: str):
-    """Update user profile."""
+async def update_user(user_id: UUID, display_name: str, current_user: CurrentUser):
+    """Update user profile.
+
+    HIVE-003: `user_id` is a path target, so it must be checked against the caller —
+    previously anyone could rename any account.
+    """
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=403, detail="You can only update your own profile"
+        )
+
     async with async_session_factory() as session:
         stmt = select(AppUserDB).where(AppUserDB.id == user_id)
         result = await session.execute(stmt)
@@ -264,7 +290,7 @@ async def update_user(user_id: UUID, display_name: str):
             raise NotFoundError(resource_type="User", resource_id=str(user_id))
 
         user.display_name = display_name
-        user.last_active = datetime.utcnow()
+        user.last_active = utcnow()
         await session.commit()
 
         return {"status": "updated"}

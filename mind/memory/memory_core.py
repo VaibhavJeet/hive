@@ -6,6 +6,8 @@ Implements both short-term (Redis) and long-term (PostgreSQL + pgvector) memory.
 import json
 import asyncio
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any, Tuple
 from uuid import UUID
 import numpy as np
@@ -140,7 +142,7 @@ class ShortTermMemory:
         turn = {
             "role": role,
             "content": content,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             "metadata": metadata or {}
         }
         await self.redis.rpush(key, json.dumps(turn))
@@ -196,7 +198,7 @@ class ShortTermMemory:
         state = {
             "is_online": is_online,
             "current_activity": current_activity,
-            "last_seen": datetime.utcnow().isoformat()
+            "last_seen": utcnow().isoformat()
         }
         await self.redis.hset(key, mapping=state)
         await self.redis.expire(key, 3600)  # 1 hour
@@ -355,7 +357,7 @@ class LongTermMemory:
             conditions.append(MemoryItemDB.importance >= min_importance)
 
         if time_window_days:
-            cutoff = datetime.utcnow() - timedelta(days=time_window_days)
+            cutoff = utcnow() - timedelta(days=time_window_days)
             conditions.append(MemoryItemDB.created_at >= cutoff)
 
         # Vector similarity search using pgvector
@@ -391,7 +393,7 @@ class LongTermMemory:
             )
 
             # Update access stats
-            memory_db.last_accessed = datetime.utcnow()
+            memory_db.last_accessed = utcnow()
             memory_db.access_count += 1
 
             memories.append((memory, similarity))
@@ -454,7 +456,7 @@ class LongTermMemory:
 
         # Delete old, low-importance memories
         delete_threshold = max_memories * 0.8
-        cutoff_date = datetime.utcnow() - timedelta(days=30)
+        cutoff_date = utcnow() - timedelta(days=30)
 
         delete_stmt = (
             delete(MemoryItemDB)
@@ -543,7 +545,7 @@ class RelationshipMemory:
 
         # Update interaction count
         rel.interaction_count += 1
-        rel.last_interaction = datetime.utcnow()
+        rel.last_interaction = utcnow()
 
         # Add new topic
         if new_topic and new_topic not in rel.topics_discussed:

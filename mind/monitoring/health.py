@@ -7,6 +7,8 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import List, Optional, Dict, Any
 
@@ -450,7 +452,7 @@ class HealthChecker:
 
         return SystemHealth(
             status=overall_status,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=utcnow().isoformat(),
             checks=health_checks,
         )
 

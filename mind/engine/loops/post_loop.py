@@ -12,6 +12,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -238,7 +240,7 @@ class PostGenerationLoop(BaseLoop):
                 last_post = self.last_post_time.get(bot.id)
                 min_interval = 1800  # 30 minutes in seconds
                 if last_post:
-                    elapsed = (datetime.utcnow() - last_post).total_seconds()
+                    elapsed = (utcnow() - last_post).total_seconds()
                     if elapsed < self.authenticity_engine.scale_time(min_interval):
                         continue
 
@@ -255,7 +257,7 @@ class PostGenerationLoop(BaseLoop):
                 post_probability = check_interval_hours / expected_interval_hours
 
                 # Peak hour boost
-                current_hour = datetime.utcnow().hour
+                current_hour = utcnow().hour
                 peak_hours = activity_pattern.get("peak_activity_hours", [])
                 if current_hour in peak_hours:
                     post_probability *= 1.5
@@ -276,7 +278,7 @@ class PostGenerationLoop(BaseLoop):
     def _select_active_bot_for_posting(self) -> Optional["BotProfile"]:
         """Select a bot to post based on activity patterns and randomness."""
         candidates = []
-        current_hour = datetime.utcnow().hour
+        current_hour = utcnow().hour
 
         for bot in self.active_bots.values():
             # Check if bot is "awake"
@@ -559,7 +561,7 @@ Output ONLY the post."""
             except Exception as e:
                 logger.debug(f"Failed to extract hashtags: {e}")
 
-            self.last_post_time[bot.id] = datetime.utcnow()
+            self.last_post_time[bot.id] = utcnow()
 
             # Store as memory for future context
             if self.memory_core:

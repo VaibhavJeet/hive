@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import Depends, APIRouter, Query, HTTPException
 from pydantic import BaseModel, Field
 
 from mind.search import (
@@ -18,6 +18,13 @@ from mind.search import (
 )
 
 
+from mind.api.dependencies import get_current_user
+from mind.core.auth import AuthenticatedUser
+
+# HIVE-016: search requires a session. Full-text search is the most expensive read in
+# the API — and until search_vector is populated (HIVE-139) every query is a sequential
+# scan computing to_tsvector per row. Requiring a session gives the rate limiter and the
+# logs something to attribute that cost to.
 router = APIRouter(prefix="/search", tags=["search"])
 
 
@@ -152,7 +159,8 @@ async def search_all(
         default="all",
         description="Type of entities to search"
     ),
-    limit: int = Query(default=10, ge=1, le=50, description="Maximum results per type")
+    limit: int = Query(default=10, ge=1, le=50, description="Maximum results per type"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Search across posts, users, and bots.
@@ -220,7 +228,8 @@ async def search_posts(
     date_to: Optional[datetime] = Query(default=None, description="Filter posts until this date"),
     has_media: Optional[bool] = Query(default=None, description="Filter by media presence"),
     limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
-    offset: int = Query(default=0, ge=0, description="Results offset for pagination")
+    offset: int = Query(default=0, ge=0, description="Results offset for pagination"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Search posts with filters.
@@ -257,7 +266,8 @@ async def search_posts(
 @router.get("/suggestions", response_model=SuggestionsResponse)
 async def get_suggestions(
     q: str = Query(..., min_length=2, max_length=100, description="Partial search query"),
-    limit: int = Query(default=10, ge=1, le=20, description="Maximum suggestions")
+    limit: int = Query(default=10, ge=1, le=20, description="Maximum suggestions"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Get autocomplete suggestions based on partial query.
@@ -281,7 +291,8 @@ async def get_suggestions(
 @router.get("/users", response_model=List[UserSearchResult])
 async def search_users(
     q: str = Query(..., min_length=1, max_length=500, description="Search query"),
-    limit: int = Query(default=20, ge=1, le=50, description="Maximum results")
+    limit: int = Query(default=20, ge=1, le=50, description="Maximum results"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Search users by display name.
@@ -296,7 +307,8 @@ async def search_users(
 @router.get("/bots", response_model=List[BotSearchResult])
 async def search_bots(
     q: str = Query(..., min_length=1, max_length=500, description="Search query"),
-    limit: int = Query(default=20, ge=1, le=50, description="Maximum results")
+    limit: int = Query(default=20, ge=1, le=50, description="Maximum results"),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Search bots by name, handle, bio, and interests.

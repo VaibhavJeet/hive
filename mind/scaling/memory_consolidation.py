@@ -7,6 +7,8 @@ to manage storage and maintain performance.
 
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any, Tuple
 from uuid import UUID, uuid4
 from dataclasses import dataclass, field
@@ -286,7 +288,7 @@ class MemoryConsolidationManager:
             ConsolidationResult with details
         """
         async def _summarize(sess: AsyncSession) -> ConsolidationResult:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            cutoff_date = utcnow() - timedelta(days=days)
 
             # Get old memories
             stmt = (
@@ -419,7 +421,7 @@ class MemoryConsolidationManager:
             ConsolidationResult with details
         """
         async def _archive(sess: AsyncSession) -> ConsolidationResult:
-            cutoff_date = datetime.utcnow() - timedelta(days=older_than_days)
+            cutoff_date = utcnow() - timedelta(days=older_than_days)
 
             # Find memories to archive
             stmt = select(MemoryItemDB).where(
@@ -469,7 +471,7 @@ class MemoryConsolidationManager:
                 memory_count=len(memories_to_archive),
                 original_memories=archive_data,
                 summary=f"Archived {len(memories_to_archive)} memories older than {older_than_days} days",
-                created_at=datetime.utcnow()
+                created_at=utcnow()
             )
             sess.add(archive)
 
@@ -564,7 +566,7 @@ class MemoryConsolidationManager:
             size_bytes = size_result.scalar() or 0
 
             # Consolidation candidates (old, low importance)
-            cutoff_date = datetime.utcnow() - timedelta(days=self.summarize_after_days)
+            cutoff_date = utcnow() - timedelta(days=self.summarize_after_days)
             candidates_stmt = select(func.count()).select_from(MemoryItemDB).where(
                 and_(
                     MemoryItemDB.bot_id == bot_id,

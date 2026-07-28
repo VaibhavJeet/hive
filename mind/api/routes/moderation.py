@@ -17,6 +17,9 @@ from mind.core.database import (
 from mind.moderation.content_filter import (
     ContentFilter, ModerationResult, get_content_filter, SuggestedAction
 )
+from mind.api.dependencies import CurrentUser
+from mind.api.routes.admin import require_admin
+from mind.core.database import AppUserDB
 from mind.moderation.report_system import (
     ReportReason, ReportStatus, ModerationAction,
     ContentReport, create_report, get_reports, resolve_report,
@@ -134,11 +137,13 @@ class ReportStatsResponse(BaseModel):
 
 @router.post("/reports", response_model=NewReportResponse, tags=["reports"])
 async def submit_report(
-    reporter_id: UUID,
-    request: SubmitReportRequest
+    request: SubmitReportRequest,
+    current_user: CurrentUser,
 ):
     """
     Submit a new content report.
+
+    The reporter is the signed-in caller (HIVE-003).
 
     This endpoint allows users to report content (posts, comments, messages, profiles)
     that violates community guidelines. Reports are automatically tracked and content
@@ -172,7 +177,7 @@ async def submit_report(
     # Submit the report
     reporting_service = get_reporting_service()
     report = await reporting_service.submit_report(
-        reporter_id=reporter_id,
+        reporter_id=current_user.id,
         target_type=request.target_type,
         target_id=request.target_id,
         report_type=report_type,
@@ -198,6 +203,7 @@ async def submit_report(
 
 @router.get("/reports", response_model=List[NewReportResponse], tags=["reports"])
 async def list_all_reports(
+    admin: AppUserDB = Depends(require_admin),
     status: Optional[str] = Query(None, description="Filter by status: pending, reviewed, resolved, dismissed"),
     limit: int = Query(default=50, le=100, description="Maximum number of reports to return")
 ):
@@ -250,11 +256,14 @@ async def list_all_reports(
 @router.post("/reports/{report_id}/review", response_model=NewReportResponse, tags=["reports"])
 async def review_report(
     report_id: UUID,
-    reviewer_id: UUID,
-    request: ReviewReportRequest
+    request: ReviewReportRequest,
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Admin: Review and resolve a report.
+
+    The reviewer is the bearer-token admin — previously any anonymous caller could
+    attribute a moderation decision to any moderator id (HIVE-003).
 
     This endpoint allows moderators to review a report and take action on the
     reported content. Actions include:
@@ -275,7 +284,7 @@ async def review_report(
     reporting_service = get_reporting_service()
     report = await reporting_service.review_report(
         report_id=report_id,
-        reviewer_id=reviewer_id,
+        reviewer_id=admin.id,
         action=request.action,
         notes=request.notes
     )
@@ -301,7 +310,7 @@ async def review_report(
 
 
 @router.get("/reports/stats", response_model=ReportStatsResponse, tags=["reports"])
-async def get_report_statistics():
+async def get_report_statistics(admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get report statistics.
 
@@ -320,8 +329,24 @@ async def get_report_statistics():
     )
 
 
+@router.get("/reports/counts", response_model=ReportCountsResponse)
+async def get_reports_counts(admin: AppUserDB = Depends(require_admin)):
+    """
+    Admin: Get counts of reports by status.
+    """
+    counts = await get_report_counts()
+
+    return ReportCountsResponse(
+        pending=counts.get("pending", 0),
+        under_review=counts.get("under_review", 0),
+        resolved=counts.get("resolved", 0),
+        dismissed=counts.get("dismissed", 0),
+        escalated=counts.get("escalated", 0)
+    )
+
+
 @router.get("/reports/{report_id}", response_model=NewReportResponse, tags=["reports"])
-async def get_report_details(report_id: UUID):
+async def get_report_details(report_id: UUID, admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get details of a specific report.
     """
@@ -351,16 +376,18 @@ async def get_report_details(report_id: UUID):
 @router.post("/reports/{report_id}/dismiss", response_model=NewReportResponse, tags=["reports"])
 async def dismiss_single_report(
     report_id: UUID,
-    reviewer_id: UUID,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Admin: Dismiss a report as not requiring action.
+
+    The reviewer is the bearer-token admin (HIVE-003).
     """
     reporting_service = get_reporting_service()
     report = await reporting_service.dismiss_report(
         report_id=report_id,
-        reviewer_id=reviewer_id,
+        reviewer_id=admin.id,
         notes=notes
     )
 
@@ -385,7 +412,9 @@ async def dismiss_single_report(
 
 
 @router.get("/reports/content/{target_id}", response_model=List[NewReportResponse], tags=["reports"])
-async def get_reports_for_content(target_id: UUID):
+async def get_reports_for_content(
+    target_id: UUID, admin: AppUserDB = Depends(require_admin)
+):
     """
     Admin: Get all reports for a specific piece of content.
 
@@ -421,11 +450,13 @@ async def get_reports_for_content(target_id: UUID):
 
 @router.post("/report", response_model=ReportResponse)
 async def report_content(
-    reporter_id: UUID,
-    request: CreateReportRequest
+    request: CreateReportRequest,
+    current_user: CurrentUser,
 ):
     """
     Report content for moderation review.
+
+    The reporter is the signed-in caller (HIVE-003).
 
     Users can report posts, comments, messages, or profiles that violate
     community guidelines.
@@ -459,7 +490,7 @@ async def report_content(
 
     # Create the report
     report = await create_report(
-        reporter_id=reporter_id,
+        reporter_id=current_user.id,
         content_id=request.content_id,
         content_type=request.content_type,
         reason=reason,
@@ -483,7 +514,7 @@ async def report_content(
 
 
 @router.post("/check", response_model=ModerationCheckResponse)
-async def check_content(request: ModerationCheckRequest):
+async def check_content(request: ModerationCheckRequest, current_user: CurrentUser):
     """
     Check content against moderation policies.
 
@@ -511,6 +542,7 @@ async def check_content(request: ModerationCheckRequest):
 
 @router.get("/reports", response_model=List[ReportResponse])
 async def list_reports(
+    admin: AppUserDB = Depends(require_admin),
     status: Optional[str] = Query(None, description="Filter by status"),
     content_type: Optional[str] = Query(None, description="Filter by content type"),
     limit: int = Query(default=50, le=100),
@@ -556,24 +588,8 @@ async def list_reports(
     ]
 
 
-@router.get("/reports/counts", response_model=ReportCountsResponse)
-async def get_reports_counts():
-    """
-    Admin: Get counts of reports by status.
-    """
-    counts = await get_report_counts()
-
-    return ReportCountsResponse(
-        pending=counts.get("pending", 0),
-        under_review=counts.get("under_review", 0),
-        resolved=counts.get("resolved", 0),
-        dismissed=counts.get("dismissed", 0),
-        escalated=counts.get("escalated", 0)
-    )
-
-
 @router.get("/reports/{report_id}", response_model=ReportResponse)
-async def get_single_report(report_id: UUID):
+async def get_single_report(report_id: UUID, admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get details of a specific report.
     """
@@ -600,11 +616,13 @@ async def get_single_report(report_id: UUID):
 @router.post("/resolve/{report_id}", response_model=ReportResponse)
 async def resolve_content_report(
     report_id: UUID,
-    moderator_id: UUID,
-    request: ResolveReportRequest
+    request: ResolveReportRequest,
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Admin: Resolve a content report by taking action.
+
+    The moderator is the bearer-token admin (HIVE-003).
     """
     # Validate action
     try:
@@ -618,7 +636,7 @@ async def resolve_content_report(
     report = await resolve_report(
         report_id=report_id,
         action=action,
-        moderator_id=moderator_id,
+        moderator_id=admin.id,
         notes=request.notes
     )
 
@@ -650,15 +668,17 @@ async def resolve_content_report(
 @router.post("/dismiss/{report_id}", response_model=ReportResponse)
 async def dismiss_content_report(
     report_id: UUID,
-    moderator_id: UUID,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Admin: Dismiss a report as invalid or not actionable.
+
+    The moderator is the bearer-token admin (HIVE-003).
     """
     report = await dismiss_report(
         report_id=report_id,
-        moderator_id=moderator_id,
+        moderator_id=admin.id,
         notes=notes
     )
 

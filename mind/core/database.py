@@ -1331,13 +1331,42 @@ ReportDB = ContentReportDB
 # ============================================================================
 
 async def init_database():
-    """Initialize database tables."""
+    """Initialize database tables.
+
+    HIVE-033: `create_all` used to run on every startup alongside a six-revision
+    Alembic chain, so there were two competing schema authorities. In development that
+    hides a missed migration — the table appears anyway — and in production the two
+    silently diverge, because `create_all` never alters an existing table.
+
+    Outside test environments the schema is Alembic's alone; this only ensures the
+    pgvector extension exists and warns if migrations have not been applied.
+    """
     from sqlalchemy import text
+
+    from mind.config.settings import settings
+
     async with engine.begin() as conn:
         # Create pgvector extension
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Create all tables
-        await conn.run_sync(Base.metadata.create_all)
+
+        if settings.ENVIRONMENT.lower() == "test":
+            # Tests build a throwaway schema directly; there is no migration history
+            # to respect and no divergence to hide.
+            await conn.run_sync(Base.metadata.create_all)
+            return
+
+        applied = await conn.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'alembic_version')"
+            )
+        )
+        if not applied.scalar():
+            raise RuntimeError(
+                "No alembic_version table found — the schema has not been migrated. "
+                "Run `alembic upgrade head` before starting the API. "
+                "(create_all no longer masks this; see HIVE-033.)"
+            )
 
 
 async def drop_database():

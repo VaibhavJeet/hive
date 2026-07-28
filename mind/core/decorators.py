@@ -11,6 +11,8 @@ Provides reusable decorators for:
 
 import asyncio
 import functools
+
+from fastapi import HTTPException
 import logging
 import time
 from typing import Any, Callable, Optional, Type, Tuple, Union
@@ -65,6 +67,12 @@ def handle_errors(
             except AppError:
                 # Re-raise AppError subclasses as-is
                 raise
+            except HTTPException:
+                # A deliberate HTTP response (401/403/404/...) is not an error to
+                # swallow. Without this, `raise HTTPException(403)` inside a decorated
+                # handler was rewritten to a 500, silently defeating every
+                # authorization check in the decorated routers (HIVE-003).
+                raise
             except exception_types as e:
                 # Catch specific exception types
                 if log_traceback:
@@ -95,6 +103,9 @@ def handle_errors(
             try:
                 return func(*args, **kwargs)
             except AppError:
+                raise
+            except HTTPException:
+                # See the async wrapper above.
                 raise
             except exception_types as e:
                 if log_traceback:

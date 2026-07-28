@@ -172,12 +172,17 @@ class NotificationService:
             result = await session.execute(stmt)
             return result.scalar() or 0
 
-    async def mark_as_read(self, notification_id: UUID) -> bool:
+    async def mark_as_read(
+        self, notification_id: UUID, owner_id: Optional[UUID] = None
+    ) -> bool:
         """
         Mark a notification as read.
 
         Args:
             notification_id: ID of notification to mark as read
+            owner_id: If given, the update only applies to that user's notification.
+                HIVE-003: callers acting on behalf of a user MUST pass this, or one
+                user can mark another user's notifications by guessing an id.
 
         Returns:
             True if notification was found and updated
@@ -188,6 +193,8 @@ class NotificationService:
                 .where(NotificationDB.id == notification_id)
                 .values(read=True)
             )
+            if owner_id is not None:
+                stmt = stmt.where(NotificationDB.user_id == owner_id)
             result = await session.execute(stmt)
             await session.commit()
 
@@ -215,18 +222,24 @@ class NotificationService:
 
             return result.rowcount
 
-    async def delete_notification(self, notification_id: UUID) -> bool:
+    async def delete_notification(
+        self, notification_id: UUID, owner_id: Optional[UUID] = None
+    ) -> bool:
         """
         Delete a notification.
 
         Args:
             notification_id: ID of notification to delete
+            owner_id: If given, the delete only applies to that user's notification.
+                HIVE-003: see `mark_as_read` — without it this is an IDOR.
 
         Returns:
             True if notification was found and deleted
         """
         async with async_session_factory() as session:
             stmt = delete(NotificationDB).where(NotificationDB.id == notification_id)
+            if owner_id is not None:
+                stmt = stmt.where(NotificationDB.user_id == owner_id)
             result = await session.execute(stmt)
             await session.commit()
 

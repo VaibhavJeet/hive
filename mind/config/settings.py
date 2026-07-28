@@ -239,6 +239,15 @@ class Settings(BaseSettings):
     # SECURITY
     # -------------------------------------------------------------------------
 
+    TRUSTED_PROXY_HEADERS: bool = Field(
+        default=False,
+        description=(
+            "Trust X-Forwarded-For for client identity (rate limiting). Enable only "
+            "when the app sits behind a proxy that overwrites the header — otherwise a "
+            "caller can spoof it and reset their own rate-limit budget."
+        ),
+    )
+
     CORS_ORIGINS: str = Field(
         default="*",
         description="Comma-separated list of allowed origins, or * for all"
@@ -276,6 +285,23 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # GITHUB
     # -------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
+    # SELF-CODING (bots writing and executing their own code)
+    # -------------------------------------------------------------------------
+
+    SELF_CODING_HTTP_TRIGGER_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Expose POST /evolution/bots/{id}/trigger-self-coding — ask a bot to write "
+            "code that extends itself, and watch what it produces.\n\n"
+            "On by default. Generated code runs in a separate interpreter that is killed "
+            "on timeout, has no import system, no filesystem and no network, and is "
+            "capped on memory and CPU. The endpoint is still admin-only, because it does "
+            "turn an API parameter into code execution — but containment lives in the "
+            "process boundary, not in keeping the bots' language small."
+        ),
+    )
 
     GITHUB_TOKEN: Optional[str] = Field(
         default=None,

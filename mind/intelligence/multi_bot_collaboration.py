@@ -12,6 +12,8 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Any, Callable
 from uuid import UUID, uuid4
@@ -78,7 +80,7 @@ class Collaboration:
     # Timestamps
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
-    expires_at: datetime = field(default_factory=lambda: datetime.utcnow() + timedelta(hours=24))
+    expires_at: datetime = field(default_factory=lambda: utcnow() + timedelta(hours=24))
     completed_at: Optional[datetime] = None
 
     # Outcome
@@ -148,9 +150,9 @@ class Collaboration:
             tasks=tasks,
             current_step=data.get("current_step", 0),
             total_steps=data.get("total_steps", 1),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.utcnow(),
-            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else datetime.utcnow() + timedelta(hours=24),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else utcnow(),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else utcnow(),
+            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else utcnow() + timedelta(hours=24),
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             output=data.get("output"),
             output_content_ids=data.get("output_content_ids", []),
@@ -159,7 +161,7 @@ class Collaboration:
 
     def is_expired(self) -> bool:
         """Check if collaboration has expired."""
-        return datetime.utcnow() > self.expires_at and self.status == CollaborationStatus.PROPOSED
+        return utcnow() > self.expires_at and self.status == CollaborationStatus.PROPOSED
 
     def get_all_participants(self) -> List[UUID]:
         """Get all participant IDs."""
@@ -168,11 +170,11 @@ class Collaboration:
     def advance_step(self):
         """Move to next step."""
         self.current_step = min(self.current_step + 1, self.total_steps)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
 
         if self.current_step >= self.total_steps:
             self.status = CollaborationStatus.COMPLETED
-            self.completed_at = datetime.utcnow()
+            self.completed_at = utcnow()
 
 
 class CollaborationManager:
@@ -355,7 +357,7 @@ class CollaborationManager:
             return False
 
         collab.status = CollaborationStatus.ACCEPTED
-        collab.updated_at = datetime.utcnow()
+        collab.updated_at = utcnow()
 
         logger.info(f"Collaboration {collab_id} accepted by {accepter_id}")
         return True
@@ -370,7 +372,7 @@ class CollaborationManager:
             return False
 
         collab.status = CollaborationStatus.REJECTED
-        collab.updated_at = datetime.utcnow()
+        collab.updated_at = utcnow()
         if reason:
             collab.output = f"Rejected: {reason}"
 
@@ -419,7 +421,7 @@ class CollaborationManager:
         # Execute the task
         current_task.status = "completed"
         current_task.result = task_result
-        current_task.completed_at = datetime.utcnow()
+        current_task.completed_at = utcnow()
 
         # Use registered callback if available
         callback = self._execution_callbacks.get(collab.collab_type)

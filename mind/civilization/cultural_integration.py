@@ -15,6 +15,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any, Tuple
 from uuid import UUID
 
@@ -215,7 +217,7 @@ class CulturalIntegration:
     async def _get_relevant_artifacts(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Get relevant canonical artifacts."""
         # Check cache
-        if self._cache_time and datetime.utcnow() - self._cache_time < self._cache_ttl:
+        if self._cache_time and utcnow() - self._cache_time < self._cache_ttl:
             return random.sample(self._artifact_cache, min(limit, len(self._artifact_cache)))
 
         async with async_session_factory() as session:
@@ -239,7 +241,7 @@ class CulturalIntegration:
                 }
                 for a, b in artifacts
             ]
-            self._cache_time = datetime.utcnow()
+            self._cache_time = utcnow()
 
         return random.sample(self._artifact_cache, min(limit, len(self._artifact_cache)))
 

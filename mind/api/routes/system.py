@@ -6,15 +6,23 @@ import os
 import time
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from collections import deque
 
 import psutil
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+from mind.api.routes.admin import require_admin
+from mind.core.database import AppUserDB
+
+# HIVE-015: all three endpoints are operator telemetry, not observation. /status and
+# /performance report host CPU, memory, disk and network; /logs returns the application
+# log buffer, which carries user content, bot output, and error detail including paths.
 router = APIRouter(prefix="/system", tags=["system"])
 
 # Track server start time
@@ -28,7 +36,7 @@ def add_system_log(level: str, message: str, details: str = "", source: str = "s
     """Add a log entry to the in-memory buffer. Call this from anywhere in the app."""
     _log_buffer.append({
         "id": len(_log_buffer),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
         "level": level,
         "message": message,
         "details": details,
@@ -162,7 +170,7 @@ def _collect_performance_snapshot():
         _last_disk_time = now
 
     _perf_history.append(PerformancePoint(
-        time=datetime.utcnow().strftime("%H:%M:%S"),
+        time=utcnow().strftime("%H:%M:%S"),
         cpu=round(cpu, 1),
         memory=round(mem, 1),
         disk_io_read=round(max(0, read_rate), 2),
@@ -175,7 +183,7 @@ def _collect_performance_snapshot():
 # ============================================================================
 
 @router.get("/status", response_model=SystemStatusResponse)
-async def get_system_status():
+async def get_system_status(admin: AppUserDB = Depends(require_admin)):
     """
     Get real-time system status including CPU, memory, disk, network,
     and service health.
@@ -218,6 +226,7 @@ async def get_system_status():
 @router.get("/performance", response_model=PerformanceResponse)
 async def get_performance_data(
     points: int = Query(default=30, le=60, description="Number of data points to return"),
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Get recent performance time-series data (CPU, memory, disk I/O).
@@ -254,6 +263,7 @@ async def get_system_logs(
     search: Optional[str] = Query(None, description="Search in message or details"),
     limit: int = Query(default=100, le=500),
     offset: int = Query(default=0, ge=0),
+    admin: AppUserDB = Depends(require_admin),
 ):
     """
     Get system logs from the in-memory buffer.
@@ -378,8 +388,10 @@ async def _check_services() -> List[ServiceStatus]:
             engine_metrics = [
                 {"label": "Status", "value": "running"},
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        # The engine being unreachable IS the status worth reporting, so this is
+        # logged rather than swallowed — it used to render as a blank panel.
+        logger.warning("Could not read activity engine status: %s", exc)
 
     services.append(ServiceStatus(name="Activity Engine", status=engine_status, metrics=engine_metrics))
 

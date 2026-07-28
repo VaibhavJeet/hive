@@ -4,6 +4,8 @@ Handles behavior flagging and auto-moderation of bots.
 """
 
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional, Literal
 from uuid import UUID
 from enum import Enum
@@ -98,6 +100,28 @@ class FlaggingService:
             if not reporter:
                 return {"status": "error", "message": "Reporter not found"}
 
+            # One pending flag per (reporter, bot). Without this a single account can
+            # submit AUTO_PAUSE_THRESHOLD flags in a row and silence any bot on its own
+            # — the auto-pause counter did not care who filed them (HIVE-008).
+            existing_stmt = select(BotBehaviorFlagDB).where(
+                BotBehaviorFlagDB.bot_id == bot_id,
+                BotBehaviorFlagDB.reporter_id == reporter_id,
+                BotBehaviorFlagDB.status == FlagStatus.PENDING.value,
+            )
+            existing_result = await session.execute(existing_stmt)
+            existing = existing_result.scalar_one_or_none()
+
+            if existing:
+                return {
+                    "status": "already_flagged",
+                    "flag_id": str(existing.id),
+                    "bot_id": str(bot_id),
+                    "bot_name": bot.display_name,
+                    "flag_type": existing.flag_type,
+                    "created_at": existing.created_at,
+                    "message": "You already have a pending flag for this bot",
+                }
+
             # Create flag record
             flag = BotBehaviorFlagDB(
                 bot_id=bot_id,
@@ -125,7 +149,7 @@ class FlaggingService:
             pending_count = await self._get_pending_flag_count(session, bot_id)
             if pending_count >= self.auto_pause_threshold and not bot.is_paused:
                 bot.is_paused = True
-                bot.paused_at = datetime.utcnow()
+                bot.paused_at = utcnow()
                 # System auto-pause
                 await session.commit()
                 result["auto_paused"] = True
@@ -135,8 +159,15 @@ class FlaggingService:
             return result
 
     async def _get_pending_flag_count(self, session: AsyncSession, bot_id: UUID) -> int:
-        """Get count of pending flags for a bot."""
-        stmt = select(func.count(BotBehaviorFlagDB.id)).where(
+        """Count *distinct reporters* with a pending flag against a bot.
+
+        HIVE-008: this counted rows, so auto-pause measured flag volume rather than
+        how many people were complaining. Counting reporters means the threshold
+        expresses what it is meant to — community consensus, not one persistent user.
+        """
+        stmt = select(
+            func.count(func.distinct(BotBehaviorFlagDB.reporter_id))
+        ).where(
             BotBehaviorFlagDB.bot_id == bot_id,
             BotBehaviorFlagDB.status == FlagStatus.PENDING.value
         )
@@ -242,7 +273,7 @@ class FlaggingService:
             flag.status = FlagStatus.RESOLVED.value
             flag.resolution = resolution
             flag.resolved_by = admin_id
-            flag.resolved_at = datetime.utcnow()
+            flag.resolved_at = utcnow()
 
             await session.commit()
 

@@ -17,6 +17,8 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
@@ -37,9 +39,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+import json
+
 from mind.config.settings import settings
+from mind.core.rate_limit import RateLimiter
 from sqlalchemy import select
-from mind.core.database import init_database, get_session, async_session_factory
+from mind.core.database import init_database, get_session, async_session_factory, AppUserDB
 from mind.core.llm_client import get_llm_client, get_cached_client
 from mind.memory.memory_core import get_memory_core
 from mind.scheduler.activity_scheduler import create_scheduler, create_orchestrator
@@ -53,10 +58,13 @@ from mind.api.routes import (
     admin_router, blocking_router, scaling_router, civilization_router,
     settings_router, system_router
 )
+from mind.api.routes.admin import require_admin
 from mind.api.routes.evolution import router as evolution_router
 from mind.api.routes.metrics import router as metrics_router
 from mind.notifications.notification_service import get_notification_service
 from mind.notifications.push_service import get_push_service
+from mind.api.dependencies import get_current_user
+from mind.core.auth import AuthenticatedUser, verify_access_token
 from mind.monitoring.middleware import MetricsMiddleware
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -67,63 +75,56 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ============================================================================
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple in-memory rate limiter."""
+    """Sliding-window rate limiter (HIVE-026).
 
-    def __init__(self, app, requests_per_minute: int = 60, burst_limit: int = 10):
+    The counting lives in `mind.core.rate_limit`, backed by Redis so the window is
+    shared across workers rather than per-process, with a bounded in-process fallback
+    when Redis is unavailable.
+    """
+
+    #: Paths that must answer even under load. `/health` in particular is a liveness
+    #: probe — throttling it would make an overloaded server look dead and get it
+    #: restarted, which is exactly the wrong response (see HIVE-135).
+    EXEMPT_PATHS = frozenset(
+        ["/docs", "/redoc", "/openapi.json", "/health", "/health/detailed"]
+    )
+
+    def __init__(self, app, requests_per_minute: int = 120, burst_limit: int = 20):
         super().__init__(app)
-        self.requests_per_minute = requests_per_minute
-        self.burst_limit = burst_limit
-        self.request_counts: Dict[str, List[float]] = defaultdict(list)
+        self.limiter = RateLimiter(
+            requests_per_minute=requests_per_minute, burst_limit=burst_limit
+        )
 
-    def _get_client_ip(self, request: Request) -> str:
-        """Get client IP from request."""
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+    def _identity(self, request: Request) -> str:
+        """Who to count against.
+
+        `X-Forwarded-For` is client-controlled unless a trusted proxy overwrites it, so
+        a spoofed header would let a caller reset their own budget. It is honoured only
+        when TRUSTED_PROXY_HEADERS is enabled — otherwise the peer address is used.
+        """
+        if settings.TRUSTED_PROXY_HEADERS:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
-    def _cleanup_old_requests(self, client_ip: str, window: float = 60.0):
-        """Remove requests older than the window."""
-        now = time.time()
-        self.request_counts[client_ip] = [
-            t for t in self.request_counts[client_ip]
-            if now - t < window
-        ]
-
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for docs and health endpoints
-        if request.url.path in ["/docs", "/redoc", "/openapi.json", "/health"]:
+        if request.url.path in self.EXEMPT_PATHS:
             return await call_next(request)
 
-        client_ip = self._get_client_ip(request)
-        now = time.time()
+        # Under test every request comes from the same synthetic client, so a shared
+        # window would make results depend on test order.
+        if settings.ENVIRONMENT.lower() == "test":
+            return await call_next(request)
 
-        # Cleanup old requests
-        self._cleanup_old_requests(client_ip)
-
-        # Check rate limit
-        recent_requests = len(self.request_counts[client_ip])
-
-        if recent_requests >= self.requests_per_minute:
+        allowed, reason, retry_after = await self.limiter.check(self._identity(request))
+        if not allowed:
             return Response(
-                content='{"detail": "Rate limit exceeded. Please try again later."}',
+                content=json.dumps({"detail": reason}),
                 status_code=429,
                 media_type="application/json",
-                headers={"Retry-After": "60"}
+                headers={"Retry-After": str(retry_after)},
             )
-
-        # Check burst limit (requests in last second)
-        burst_count = sum(1 for t in self.request_counts[client_ip] if now - t < 1.0)
-        if burst_count >= self.burst_limit:
-            return Response(
-                content='{"detail": "Too many requests. Please slow down."}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": "1"}
-            )
-
-        # Record this request
-        self.request_counts[client_ip].append(now)
 
         return await call_next(request)
 
@@ -196,6 +197,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
     print("Starting AI Community Companions...")
+
+    # HIVE-021: both validators existed and neither was ever called, so every
+    # production safety check this codebase already implements was dead code —
+    # including the default-JWT-secret check (HIVE-020) and the wildcard-CORS check
+    # (HIVE-019). They run first, before anything expensive is started, and they raise
+    # rather than warn: a misconfigured production boot should fail loudly at start,
+    # not serve traffic with a placeholder signing key.
+    from mind.config.production import validate_on_startup as validate_production
+    from mind.config.settings import validate_config_on_startup
+
+    validate_config_on_startup()
+    validate_production()
 
     # Initialize database
     await init_database()
@@ -293,12 +306,12 @@ civilization systems (lifecycle, culture, relationships, rituals, and eras).
 
 ## Authentication in Swagger
 
-1. **JWT Bearer** — Click **Authorize**, open **JWT Bearer**, paste your `access_token`
-   (no need to type `Bearer `; Swagger adds it). Get a token from **POST /auth/register**
-   or **POST /auth/login** (`access_token` in the JSON body).
-2. **Admin X-User-ID** — For `/admin/*` and admin-only analytics routes, use the second
-   authorize entry and set the **X-User-ID** header value to an app user UUID with
-   `is_admin=true`.
+**JWT Bearer** — Click **Authorize**, open **JWT Bearer**, paste your `access_token`
+(no need to type `Bearer `; Swagger adds it). Get a token from **POST /auth/register**
+or **POST /auth/login** (`access_token` in the JSON body).
+
+The same scheme covers admin routes: `/admin/*` and admin-only analytics routes additionally
+require the token's user to have `is_admin=true`, and return **403** otherwise.
 
 Operations that require auth show a **lock** icon and list the required scheme(s).
 Public endpoints (e.g. civilization observation, health) have no lock.
@@ -330,8 +343,8 @@ Public endpoints (e.g. civilization observation, health) have no lock.
         {
             "name": "admin",
             "description": (
-                "Administrative routes. Requires **Admin X-User-ID** header (app user UUID "
-                "with admin rights), unless noted otherwise."
+                "Administrative routes. Requires a **JWT Bearer** access token whose user has "
+                "`is_admin=true`, unless noted otherwise."
             ),
         },
         {"name": "scaling", "description": "Scaling and capacity management controls"},
@@ -376,6 +389,9 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(feed_router)
 app.include_router(chat_router)
+# blocking_router must precede users_router: its literal `/users/blocked` would
+# otherwise be shadowed by `/users/{user_id}` and 422 on UUID parsing (HIVE-133).
+app.include_router(blocking_router)
 app.include_router(users_router)
 app.include_router(evolution_router)
 app.include_router(metrics_router)
@@ -388,9 +404,10 @@ app.include_router(analytics_dashboard_router)
 app.include_router(media_router)
 app.include_router(stories_router)
 app.include_router(search_router)
-app.include_router(admin_router)
-app.include_router(blocking_router)
+# scaling_router shares the /admin prefix and defines the literal /admin/bots/retired,
+# which /admin/bots/{bot_id} in admin_router would otherwise shadow (HIVE-133 class).
 app.include_router(scaling_router)
+app.include_router(admin_router)
 app.include_router(civilization_router)
 app.include_router(settings_router)
 app.include_router(system_router)
@@ -519,7 +536,7 @@ class PlatformInitializeResponse(BaseModel):
 )
 async def health_check():
     """Basic health check."""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": utcnow().isoformat()}
 
 
 @app.get(
@@ -537,11 +554,13 @@ async def detailed_health():
 
     return {
         "status": "healthy" if llm_healthy else "degraded",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
         "components": {
             "database": "healthy",  # Would check actual connection
             "llm": "healthy" if llm_healthy else "unavailable",
-            "scheduler": "healthy" if app.state.scheduler else "unavailable"
+            # getattr: app.state.scheduler only exists once lifespan has run. A health
+            # endpoint must report "unavailable", never crash with a 500 (HIVE-135).
+            "scheduler": "healthy" if getattr(app.state, "scheduler", None) else "unavailable"
         }
     }
 
@@ -590,8 +609,15 @@ async def list_communities():
     description="Creates a community and seeds **initial_bot_count** AI companions.",
     responses={422: {"description": "Validation error"}},
 )
-async def create_community(request: CreateCommunityRequest):
-    """Create a new community with AI companions."""
+async def create_community(
+    request: CreateCommunityRequest,
+    admin: AppUserDB = Depends(require_admin),
+):
+    """Create a new community with AI companions.
+
+    HIVE-138: admin only. This seeds up to 200 bots, each of which is LLM work — it was
+    anonymous, so one request was an unmetered spend and a mass-write in one.
+    """
     async with async_session_factory() as session:
         community = await app.state.orchestrator.community_manager.create_community(
             session=session,
@@ -703,10 +729,17 @@ async def get_community_bots(community_id: UUID, limit: int = 50):
         422: {"description": "Validation error"},
     },
 )
-async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
+async def send_message_to_bot(
+    bot_id: UUID,
+    request: MessageRequest,
+    current_user: "AuthenticatedUser" = Depends(get_current_user),
+):
     """
     Send a message to an AI companion and get a response.
     This endpoint handles the full pipeline: memory, emotion, generation, naturalization.
+
+    HIVE-138: requires a session. Every call performs memory recall and an LLM
+    generation, so anonymous access was unmetered inference on the operator's budget.
     """
     from sqlalchemy import select
     from mind.core.database import BotProfileDB
@@ -814,7 +847,7 @@ async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
 
         # Update bot state in database
         bot_db.emotional_state = new_emotional.model_dump()
-        bot_db.last_active = datetime.utcnow()
+        bot_db.last_active = utcnow()
         await session.commit()
 
         return MessageResponse(
@@ -837,8 +870,15 @@ async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
     description="Creates **num_communities** communities and seeds bots via the orchestrator.",
     responses={422: {"description": "Validation error"}},
 )
-async def initialize_platform(num_communities: int = 10):
-    """Initialize the platform with communities and bots."""
+async def initialize_platform(
+    admin: AppUserDB = Depends(require_admin),
+    num_communities: int = 10,
+):
+    """Initialize the platform with communities and bots.
+
+    HIVE-138: admin only. The default creates 10 communities of ~50 bots — roughly 500
+    bot generations from a single anonymous POST.
+    """
     communities = await app.state.orchestrator.initialize_platform(
         num_communities=num_communities
     )
@@ -861,8 +901,11 @@ async def initialize_platform(num_communities: int = 10):
     description="Aggregated community/bot counts plus LLM and scheduler stats.",
     responses={500: {"description": "Unexpected server error"}},
 )
-async def get_platform_stats():
-    """Get platform-wide statistics."""
+async def get_platform_stats(admin: AppUserDB = Depends(require_admin)):
+    """Get platform-wide statistics.
+
+    HIVE-138: admin only — this reports LLM client internals and scheduler state.
+    """
     stats = await app.state.orchestrator.get_platform_stats()
 
     llm_client = await get_cached_client()
@@ -931,13 +974,69 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ============================================================================
+# WEBSOCKET AUTHENTICATION (HIVE-017, HIVE-018)
+# ============================================================================
+#
+# Browsers cannot set headers on a WebSocket handshake, so the access token is passed
+# as a query parameter. That is the standard workaround; the cost is that the token can
+# appear in access logs, so keep WS access logging off or scrub the query string.
+#
+# Before this, /ws/{client_id} accepted any client_id with no handshake check and then
+# trusted a `user_id` sent inside the message body — so a client could subscribe to
+# anyone's notification stream and post DMs and chat messages as anyone.
+
+
+async def _authenticate_socket(websocket: WebSocket) -> Optional[AppUserDB]:
+    """Resolve the caller from `?token=`, or close the socket and return None.
+
+    Close codes are in the private 4000-4999 range: 4401 unauthenticated,
+    4403 unauthorised.
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Authentication required")
+        return None
+
+    token_data = verify_access_token(token)
+    if token_data is None or token_data.user_id is None:
+        await websocket.close(code=4401, reason="Invalid or expired token")
+        return None
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(AppUserDB).where(AppUserDB.id == token_data.user_id)
+        )
+        user = result.scalar_one_or_none()
+
+    if user is None or getattr(user, "is_banned", False):
+        await websocket.close(code=4401, reason="Authentication failed")
+        return None
+
+    return user
+
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """
     WebSocket endpoint for real-time updates.
     Receives all activity engine events: posts, likes, comments, chat messages, notifications.
+
+    Requires `?token=<access_token>`. The authenticated user is the actor for every
+    frame — `user_id` in a message body is ignored (HIVE-017), the same rule HIVE-003
+    applied to the REST surface.
     """
-    await manager.connect(websocket, client_id)
+    await websocket.accept()
+
+    user = await _authenticate_socket(websocket)
+    if user is None:
+        return
+
+    authenticated_user_id = user.id
+
+    # Registered from the token, not from a client-supplied frame.
+    manager.active_connections[client_id] = websocket
+    manager.register_user(client_id, str(authenticated_user_id))
 
     try:
         while True:
@@ -945,19 +1044,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             msg_type = data.get("type")
 
             if msg_type == "auth":
-                # Authenticate user for notifications
-                user_id = data.get("user_id")
-                if user_id:
-                    manager.register_user(client_id, user_id)
-                    await manager.send_message(client_id, {
-                        "type": "authenticated",
-                        "user_id": user_id
-                    })
+                # Retained for client compatibility. The session is already established
+                # from the handshake token; any user_id in the frame is ignored.
+                await manager.send_message(client_id, {
+                    "type": "authenticated",
+                    "user_id": str(authenticated_user_id)
+                })
 
             elif msg_type == "dm":
                 # User sending a DM to a bot
                 bot_id = UUID(data["bot_id"])
-                user_id = UUID(data["user_id"])
+                user_id = authenticated_user_id
                 content = data["content"]
 
                 # Send typing indicator
@@ -981,7 +1078,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 from mind.core.database import CommunityChatMessageDB, AppUserDB
 
                 community_id = UUID(data["community_id"])
-                user_id = UUID(data["user_id"])
+                user_id = authenticated_user_id
                 content = data["content"]
                 reply_to_id = UUID(data["reply_to_id"]) if data.get("reply_to_id") else None
 
@@ -1015,7 +1112,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                             "avatar_seed": user.avatar_seed if user else str(user_id),
                             "is_bot": False
                         },
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     })
 
             elif msg_type == "subscribe":
@@ -1027,18 +1124,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 })
 
             elif msg_type == "subscribe_notifications":
-                # Subscribe to user notifications
-                user_id = data.get("user_id")
-                if user_id:
-                    manager.register_user(client_id, user_id)
-                    # Send current unread count
-                    notification_service = get_notification_service()
-                    unread_count = await notification_service.get_unread_count(UUID(user_id))
-                    await manager.send_message(client_id, {
-                        "type": "notification_subscribed",
-                        "user_id": user_id,
-                        "unread_count": unread_count
-                    })
+                # Always the authenticated user — a client cannot subscribe to someone
+                # else's notification stream by naming them in the frame.
+                notification_service = get_notification_service()
+                unread_count = await notification_service.get_unread_count(
+                    authenticated_user_id
+                )
+                await manager.send_message(client_id, {
+                    "type": "notification_subscribed",
+                    "user_id": str(authenticated_user_id),
+                    "unread_count": unread_count
+                })
 
             elif msg_type == "ping":
                 await manager.send_message(client_id, {"type": "pong"})
@@ -1055,7 +1151,7 @@ async def send_realtime_notification(user_id: UUID, notification_data: Dict[str,
     await manager.send_to_user(str(user_id), {
         "type": "notification",
         "data": notification_data,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     })
 
 
@@ -1100,7 +1196,7 @@ class AdminConnectionManager:
                 "level": level,
                 "source": source,
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": utcnow().isoformat()
             }
         }
         # Buffer recent logs
@@ -1118,7 +1214,7 @@ class AdminConnectionManager:
                 "bot_id": bot_id,
                 "activity_type": activity_type,
                 "details": details,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": utcnow().isoformat()
             }
         })
 
@@ -1127,7 +1223,7 @@ class AdminConnectionManager:
         await self.broadcast({
             "type": "system_health",
             "data": health_data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
     async def broadcast_engine_stats(self, stats: Dict[str, Any]):
@@ -1135,7 +1231,7 @@ class AdminConnectionManager:
         await self.broadcast({
             "type": "engine_stats",
             "data": stats,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
     def get_recent_logs(self) -> List[Dict[str, Any]]:
@@ -1156,26 +1252,21 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
     Admin WebSocket endpoint for real-time dashboard updates.
     Receives system events, bot activity, logs, and health metrics.
     """
-    from mind.core.database import AppUserDB
-
     # Accept connection first to avoid browser timeout
     await websocket.accept()
 
-    # Verify admin user
-    try:
-        admin_uuid = UUID(admin_id)
-        async with async_session_factory() as session:
-            stmt = select(AppUserDB).where(AppUserDB.id == admin_uuid)
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-
-            if not user or not user.is_admin:
-                await websocket.close(code=4003, reason="Admin access required")
-                return
-    except Exception as e:
-        logger.error(f"Admin WebSocket auth error: {e}")
-        await websocket.close(code=4001, reason="Authentication failed")
+    # HIVE-018: `admin_id` came from the URL path and was merely looked up — knowing an
+    # admin's UUID was the whole credential, exactly as in HIVE-001. Identity now comes
+    # from the handshake token; the path segment is only a connection label.
+    user = await _authenticate_socket(websocket)
+    if user is None:
         return
+
+    if not user.is_admin:
+        await websocket.close(code=4403, reason="Admin access required")
+        return
+
+    admin_id = str(user.id)
 
     # Register connection (already accepted above)
     admin_manager.admin_connections[admin_id] = websocket
@@ -1198,10 +1289,11 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                 "pending_tasks": engine_status.get("pending_activities", 0),
                 "uptime_seconds": engine_status.get("uptime_seconds", 0)
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
-    except Exception:
-        pass
+    except Exception as exc:
+        # Best-effort: a failed status push must not stop the admin socket connecting.
+        logger.warning("Could not send initial engine stats to admin %s: %s", admin_id, exc)
 
     try:
         while True:
@@ -1218,7 +1310,7 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                 await admin_manager.send_message(admin_id, {
                     "type": "system_health",
                     "data": health,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": utcnow().isoformat()
                 })
 
             elif msg_type == "get_engine_stats":
@@ -1229,7 +1321,7 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                     await admin_manager.send_message(admin_id, {
                         "type": "engine_stats",
                         "data": status,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     })
 
     except WebSocketDisconnect:
@@ -1243,7 +1335,7 @@ async def broadcast_to_admins(event_type: str, data: Dict[str, Any]):
         await admin_manager.broadcast({
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
 

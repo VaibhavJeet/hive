@@ -17,6 +17,8 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Dict, List, Optional, Callable
 from uuid import UUID
@@ -179,7 +181,7 @@ class AutonomousBehaviors:
             # Remove old fulfilled desires
             self.current_desires = [
                 d for d in self.current_desires
-                if not d.fulfilled or (datetime.utcnow() - d.created_at).seconds < 3600
+                if not d.fulfilled or (utcnow() - d.created_at).seconds < 3600
             ][:20]
 
         logger.debug(f"{self.bot_name} formed desire: {desire_type.value} - {reason}")
@@ -251,7 +253,7 @@ class AutonomousBehaviors:
 
         # Rate limit community creation
         if self.last_community_created:
-            time_since = (datetime.utcnow() - self.last_community_created).total_seconds()
+            time_since = (utcnow() - self.last_community_created).total_seconds()
             if time_since < 3600:  # 1 hour minimum between community creations
                 return AutonomousAction(
                     action_type="create_community",
@@ -326,7 +328,7 @@ Output only these three lines."""
                 session.add(membership)
                 await session.commit()
 
-                self.last_community_created = datetime.utcnow()
+                self.last_community_created = utcnow()
 
                 logger.info(f"{self.bot_name} created community: {name}")
 
@@ -456,7 +458,7 @@ Output only these three lines."""
 
         # Rate limit - prevent posting too frequently
         if self.last_post:
-            time_since = (datetime.utcnow() - self.last_post).total_seconds()
+            time_since = (utcnow() - self.last_post).total_seconds()
             if time_since < 60:  # 60 seconds minimum between autonomous posts
                 return AutonomousAction(
                     action_type="post_thought",
@@ -561,7 +563,7 @@ Output only the post text."""
             except Exception as e:
                 logger.debug(f"Failed to extract hashtags: {e}")
 
-            self.last_post = datetime.utcnow()
+            self.last_post = utcnow()
 
             logger.info(f"{self.bot_name} posted in {community.name}: {content[:50]}...")
 
@@ -612,7 +614,7 @@ Output only the post text."""
 
             # Rate limit DMs to same person
             last_dm = self.last_dm_sent.get(target_bot.id)
-            if last_dm and (datetime.utcnow() - last_dm).total_seconds() < 300:
+            if last_dm and (utcnow() - last_dm).total_seconds() < 300:
                 return AutonomousAction(
                     action_type="reach_out",
                     description="Already messaged them recently",
@@ -654,7 +656,7 @@ Output only the message."""
             session.add(message)
             await session.commit()
 
-            self.last_dm_sent[target_bot.id] = datetime.utcnow()
+            self.last_dm_sent[target_bot.id] = utcnow()
 
             logger.info(f"{self.bot_name} reached out to {target_bot.display_name}")
 

@@ -2,9 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { getWebSocketManager, ConnectionStatus, EventHandlers } from '@/lib/websocket'
-
-// Default admin user ID - should come from auth in production
-const ADMIN_USER_ID = '0bb6e0aa-4503-4b45-96d3-f1bd267b62b8'
+import { onAuthChange } from '@/lib/auth'
 
 interface WebSocketContextValue {
   status: ConnectionStatus
@@ -29,26 +27,34 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribeStatus = wsManager.onStatusChange(setStatus)
 
-    // Auto-connect with admin user ID
-    const adminUserId = localStorage.getItem('admin_user_id') || ADMIN_USER_ID
-    localStorage.setItem('admin_user_id', adminUserId)
+    // Identity comes from the session. `connect()` resolves without opening a socket
+    // when signed out, so public civilization pages still render for anonymous visitors.
+    const openSocket = () => {
+      wsManager
+        .connect()
+        .catch(error => {
+          console.error('WebSocket connection failed:', error)
+        })
+        .finally(() => setIsReady(true))
+    }
 
-    wsManager.connect(adminUserId)
-      .then(() => setIsReady(true))
-      .catch(error => {
-        console.error('WebSocket connection failed:', error)
-        setIsReady(true) // Still render app even if WS fails
-      })
+    openSocket()
+
+    // Re-evaluate on login/logout: open a socket once a session exists, drop it on logout.
+    const unsubscribeAuth = onAuthChange(() => {
+      wsManager.disconnect()
+      openSocket()
+    })
 
     return () => {
       unsubscribeStatus()
+      unsubscribeAuth()
       // Don't disconnect on cleanup - keep connection alive across route changes
     }
   }, [wsManager])
 
   const connect = useCallback(async () => {
-    const adminUserId = localStorage.getItem('admin_user_id') || ADMIN_USER_ID
-    await wsManager.connect(adminUserId)
+    await wsManager.connect()
   }, [wsManager])
 
   const disconnect = useCallback(() => {

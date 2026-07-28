@@ -12,6 +12,8 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Set, TYPE_CHECKING
 from uuid import UUID
 
@@ -146,7 +148,7 @@ Use DIFFERENT topics, DIFFERENT phrasing, DIFFERENT emotions."""
             await self.event_broadcast.put({
                 "type": event_type,
                 "data": data,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": utcnow().isoformat()
             })
 
     # ========================================================================

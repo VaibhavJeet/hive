@@ -7,6 +7,8 @@ user engagement, and platform capacity.
 
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -165,7 +167,7 @@ class CommunityScalingManager:
             bot_count = bots_result.scalar() or 0
 
             # Calculate message rate (last hour)
-            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            one_hour_ago = utcnow() - timedelta(hours=1)
 
             # Chat messages
             chat_stmt = select(func.count()).select_from(CommunityChatMessageDB).where(
@@ -279,7 +281,7 @@ class CommunityScalingManager:
         """
         # Check cooldown
         if community_id in self._last_scaling:
-            cooldown = datetime.utcnow() - self._last_scaling[community_id]
+            cooldown = utcnow() - self._last_scaling[community_id]
             if cooldown.total_seconds() < self.scaling_cooldown_minutes * 60:
                 return False
 
@@ -341,7 +343,7 @@ class CommunityScalingManager:
         """
         # Check cooldown
         if community_id in self._last_scaling:
-            cooldown = datetime.utcnow() - self._last_scaling[community_id]
+            cooldown = utcnow() - self._last_scaling[community_id]
             if cooldown.total_seconds() < self.scaling_cooldown_minutes * 60:
                 return False
 
@@ -470,7 +472,7 @@ class CommunityScalingManager:
                                 CommunityMembershipDB.community_id == over_comm.id
                             )
                         )
-                        .values(community_id=target_comm.id, joined_at=datetime.utcnow())
+                        .values(community_id=target_comm.id, joined_at=utcnow())
                     )
                     await sess.execute(update_stmt)
 
@@ -491,7 +493,7 @@ class CommunityScalingManager:
                         underutilized.pop(0)
 
                 communities_adjusted += 1
-                self._last_scaling[over_comm.id] = datetime.utcnow()
+                self._last_scaling[over_comm.id] = utcnow()
 
             # Update community bot counts
             for community in communities:

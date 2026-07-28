@@ -2,15 +2,25 @@
 Media API routes - Upload, retrieve, delete media files.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from mind.api.dependencies import CurrentUser
+from mind.media.validation import (
+    UploadTooLarge,
+    content_type_matches,
+    read_upload_within_limit,
+    sniff_content_type,
+)
 from mind.core.database import async_session_factory, MediaDB
 from mind.media.storage import (
     get_media_storage,
@@ -66,14 +76,59 @@ class MediaDeleteResponse(BaseModel):
 # MEDIA ENDPOINTS
 # ============================================================================
 
+# ============================================================================
+# UPLOAD QUOTAS (HIVE-011)
+# ============================================================================
+#
+# Authenticated does not mean unlimited: one account could previously fill the disk
+# or the object-storage bill one 10 MB image at a time. These are deliberately
+# generous — the goal is to bound abuse, not to ration normal use.
+
+MAX_UPLOADS_PER_DAY = 100
+MAX_UPLOAD_BYTES_PER_DAY = 500 * 1024 * 1024  # 500 MB
+
+
+async def _enforce_upload_quota(uploader_id: UUID) -> None:
+    """Reject the request if the caller is over their rolling 24-hour quota."""
+    since = utcnow() - timedelta(hours=24)
+
+    async with async_session_factory() as session:
+        stmt = select(
+            func.count(MediaDB.id), func.coalesce(func.sum(MediaDB.size_bytes), 0)
+        ).where(
+            MediaDB.uploader_id == uploader_id,
+            MediaDB.created_at >= since,
+            MediaDB.is_deleted == False,
+        )
+        result = await session.execute(stmt)
+        count, total_bytes = result.one()
+
+    if count >= MAX_UPLOADS_PER_DAY:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Upload limit reached ({MAX_UPLOADS_PER_DAY} files per 24 hours)",
+        )
+
+    if total_bytes >= MAX_UPLOAD_BYTES_PER_DAY:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Upload size limit reached "
+                f"({MAX_UPLOAD_BYTES_PER_DAY // (1024 * 1024)} MB per 24 hours)"
+            ),
+        )
+
+
 @router.post("/upload", response_model=MediaUploadResponse)
 async def upload_media(
+    current_user: CurrentUser,
     file: UploadFile = File(...),
-    uploader_id: UUID = Query(..., description="ID of the user or bot uploading"),
-    is_bot: bool = Query(False, description="Whether uploader is a bot"),
 ):
     """
     Upload a media file (image or video).
+
+    The uploader is the signed-in caller. `is_bot` was removed with the caller-supplied
+    `uploader_id` (HIVE-003) — bots write media through the engine, not this endpoint.
 
     Supports:
     - Images: JPEG, PNG, GIF, WebP (max 10MB by default)
@@ -81,14 +136,41 @@ async def upload_media(
 
     Returns the media info including URLs for the original and thumbnail.
     """
-    # Read file content
-    content = await file.read()
+    content_type = file.content_type or "application/octet-stream"
+
+    # HIVE-011: enforce the daily quota before reading a byte, so a caller who is
+    # already over their limit cannot make us buffer the body to find out.
+    await _enforce_upload_quota(current_user.id)
+
+    # HIVE-029: the size cap is applied while streaming. It used to be checked with
+    # len(content) *after* the whole body had been read into memory, so it protected
+    # disk but not RAM.
+    limit_mb = (
+        settings.MAX_VIDEO_SIZE_MB
+        if content_type.startswith("video/")
+        else settings.MAX_IMAGE_SIZE_MB
+    )
+    try:
+        content = await read_upload_within_limit(file, int(limit_mb * 1024 * 1024))
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc))
 
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # Get content type
-    content_type = file.content_type or "application/octet-stream"
+    # HIVE-029: the declared content type is client-supplied and is not evidence.
+    # Sniff the leading bytes and require them to agree, or we will happily store
+    # arbitrary content and serve it back from our own origin under a MIME type of
+    # the uploader's choosing.
+    sniffed = sniff_content_type(content[:32])
+    if not content_type_matches(content_type, sniffed):
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"File content does not match the declared type '{content_type}'"
+                + (f" (looks like '{sniffed}')" if sniffed else "")
+            ),
+        )
 
     # Get storage and processor
     storage = get_media_storage()
@@ -99,7 +181,7 @@ async def upload_media(
             content=content,
             original_filename=file.filename or "unnamed",
             content_type=content_type,
-            uploader_id=uploader_id,
+            uploader_id=current_user.id,
         )
     except FileTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
@@ -149,8 +231,8 @@ async def upload_media(
     async with async_session_factory() as session:
         media = MediaDB(
             id=upload_result["media_id"],
-            uploader_id=uploader_id,
-            uploader_is_bot=is_bot,
+            uploader_id=current_user.id,
+            uploader_is_bot=False,
             file_type=upload_result["file_type"],
             content_type=content_type,
             original_filename=upload_result["original_filename"],
@@ -207,14 +289,12 @@ async def get_media(media_id: UUID):
 
 
 @router.delete("/{media_id}", response_model=MediaDeleteResponse)
-async def delete_media(
-    media_id: UUID,
-    requester_id: UUID = Query(..., description="ID of the user requesting deletion"),
-):
+async def delete_media(media_id: UUID, current_user: CurrentUser):
     """
     Delete a media file.
 
-    Only the uploader can delete their own media (soft delete).
+    Only the uploader can delete their own media (soft delete). Ownership is checked
+    against the bearer token, not a caller-supplied id.
     """
     async with async_session_factory() as session:
         stmt = select(MediaDB).where(
@@ -228,7 +308,7 @@ async def delete_media(
             raise HTTPException(status_code=404, detail="Media not found")
 
         # Check ownership (only uploader can delete)
-        if media.uploader_id != requester_id:
+        if media.uploader_id != current_user.id:
             raise HTTPException(
                 status_code=403,
                 detail="You can only delete your own media"
@@ -236,7 +316,7 @@ async def delete_media(
 
         # Soft delete in database
         media.is_deleted = True
-        media.deleted_at = datetime.utcnow()
+        media.deleted_at = utcnow()
 
         # Optionally delete from storage (uncomment for hard delete)
         # storage = get_media_storage()
@@ -257,6 +337,45 @@ async def delete_media(
 # FILE SERVING ENDPOINTS
 # ============================================================================
 
+
+def _resolve_within_storage(root: Path, *parts: str) -> Path:
+    """Join `parts` under `root` and refuse anything that escapes the target directory.
+
+    HIVE-028: `filename` arrives as a path parameter. Starlette matches path segments
+    on the raw URL but hands the handler the **decoded** value, so `%2e%2e%2f` reaches
+    this function as `../`. Joining it straight onto the storage root walked out of the
+    media directory and served arbitrary files.
+
+    Containment is enforced against the *type* directory (e.g. `<root>/images`), not
+    merely against `root`. Containing only to `root` would still let
+    `images/../videos/x.mp4` sidestep the `file_type` allowlist — inside storage, but
+    not the directory the caller asked for.
+    """
+    if not parts:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Every component must be a plain name. A filename is never a path.
+    for part in parts:
+        if not part or part in (".", "..") or "/" in part or "\\" in part:
+            raise HTTPException(status_code=400, detail="Invalid path")
+
+    root = root.resolve()
+    base = root.joinpath(*parts[:-1])
+    candidate = base.joinpath(parts[-1])
+
+    try:
+        resolved_base = base.resolve()
+        resolved = candidate.resolve()
+    except (OSError, RuntimeError):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if resolved_base != root and root not in resolved_base.parents:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if resolved.parent != resolved_base:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    return resolved
+
 @router.get("/files/{file_type}/{filename}")
 async def serve_media_file(file_type: str, filename: str):
     """
@@ -269,7 +388,7 @@ async def serve_media_file(file_type: str, filename: str):
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     storage = get_media_storage()
-    file_path = storage.storage_path / file_type / filename
+    file_path = _resolve_within_storage(storage.storage_path, file_type, filename)
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -304,7 +423,9 @@ async def serve_thumbnail(file_type: str, filename: str):
         raise HTTPException(status_code=400, detail="Invalid file type")
 
     storage = get_media_storage()
-    file_path = storage.storage_path / file_type / "thumbnails" / filename
+    file_path = _resolve_within_storage(
+        storage.storage_path, file_type, "thumbnails", filename
+    )
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Thumbnail not found")

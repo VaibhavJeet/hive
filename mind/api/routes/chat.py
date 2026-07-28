@@ -19,6 +19,7 @@ def sanitize_content(content: str) -> str:
     return content
 from sqlalchemy import select, desc, or_, and_
 
+from mind.api.dependencies import CurrentUser, OptionalUser
 from mind.core.database import (
     async_session_factory, CommunityChatMessageDB, DirectMessageDB,
     BotProfileDB, CommunityDB, AppUserDB, UserBlockDB, CommunityMembershipDB
@@ -133,21 +134,21 @@ class ErrorResponse(BaseModel):
     "/community/{community_id}/messages",
     response_model=List[CommunityChatMessage],
     summary="List community chat messages",
-    description="Newest-first batch; use **before_id** for cursor pagination. Optional **user_id** applies block filtering.",
+    description="Newest-first batch; use **before_id** for cursor pagination. Block filtering is applied for the signed-in caller.",
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_community_chat(
     community_id: UUID,
-    user_id: Optional[UUID] = None,
+    current_user: OptionalUser,
     limit: int = Query(default=50, le=100),
     before_id: Optional[UUID] = None
 ):
     """Get community chat messages with pagination."""
-    # Get blocked bot IDs for this user
+    # Block filtering applies to the signed-in caller, not an arbitrary user id.
     blocked_bot_ids = set()
-    if user_id:
-        blocked_bot_ids = await blocking_service.get_blocked_bot_ids(user_id)
+    if current_user:
+        blocked_bot_ids = await blocking_service.get_blocked_bot_ids(current_user.id)
 
     async with async_session_factory() as session:
         # Build query
@@ -228,7 +229,7 @@ async def get_community_chat(
     "/community/{community_id}/messages",
     response_model=CommunityChatMessage,
     summary="Send a community chat message",
-    description="**user_id** is the sender (user or bot). May queue bot replies for human senders.",
+    description="The sender is the signed-in caller. May queue bot replies.",
     responses={
         400: {"model": ErrorResponse, "description": "Blocked by moderation"},
         404: {"model": ErrorResponse, "description": "Community not found"},
@@ -238,11 +239,17 @@ async def get_community_chat(
 @handle_errors(default_error=DatabaseError)
 async def send_community_message(
     community_id: UUID,
-    user_id: UUID,
     request: SendChatMessageRequest,
-    is_bot: bool = False
+    current_user: CurrentUser,
 ):
-    """Send a message to community chat."""
+    """Send a message to community chat.
+
+    HIVE-003: the sender is the bearer-token user. The old `is_bot` flag let a
+    caller mark their own message as bot-authored and skip moderation entirely.
+    """
+    user_id = current_user.id
+    is_bot = False
+
     # Content moderation check (skip for bot-generated content)
     if not is_bot:
         content_filter = get_content_filter()
@@ -359,12 +366,14 @@ async def send_community_message(
     "/dm/conversations",
     response_model=List[ConversationPreview],
     summary="List DM conversation previews",
-    description="**user_id** is the current user; returns last message snippet and unread counts.",
+    description="Returns the signed-in user's conversations with last message snippet and unread counts.",
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
-async def get_conversations(user_id: UUID):
-    """Get all DM conversations for a user."""
+async def get_conversations(current_user: CurrentUser):
+    """Get all DM conversations for the signed-in user."""
+    user_id = current_user.id
+
     # Get blocked bot IDs for this user
     blocked_bot_ids = await blocking_service.get_blocked_bot_ids(user_id)
 
@@ -443,21 +452,55 @@ async def get_conversations(user_id: UUID):
     "/dm/{conversation_id}",
     response_model=List[DirectMessage],
     summary="List messages in a DM thread",
-    description="Marks received messages as read for **user_id**.",
+    description="Marks received messages as read for the signed-in caller.",
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_direct_messages(
     conversation_id: str,
-    user_id: UUID,
+    current_user: CurrentUser,
     limit: int = Query(default=50, le=100),
     before_id: Optional[UUID] = None
 ):
-    """Get messages in a DM conversation."""
+    """Get messages in a DM conversation the caller is part of.
+
+    HIVE-005: this previously filtered on `conversation_id` alone. Conversation ids are
+    built as `f"{min(id_a, id_b)}_{max(id_a, id_b)}"` (see `send_direct_message`), so
+    they are derivable from two UUIDs — and bot UUIDs are public via
+    `/communities/{id}/bots`. Any signed-in user could therefore read any private
+    thread by constructing its id. Participation is now required.
+    """
+    user_id = current_user.id
+
     async with async_session_factory() as session:
+        # Participation check: 404 rather than 403, so a non-participant cannot use
+        # the status code to learn whether a given conversation exists.
+        participation_stmt = (
+            select(DirectMessageDB.id)
+            .where(DirectMessageDB.conversation_id == conversation_id)
+            .where(
+                or_(
+                    DirectMessageDB.sender_id == user_id,
+                    DirectMessageDB.receiver_id == user_id,
+                )
+            )
+            .limit(1)
+        )
+        participation = await session.execute(participation_stmt)
+        if participation.first() is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
         stmt = (
             select(DirectMessageDB)
             .where(DirectMessageDB.conversation_id == conversation_id)
+            # Defence in depth: even inside a conversation the caller is part of,
+            # only rows they sent or received are returned.
+            .where(
+                or_(
+                    DirectMessageDB.sender_id == user_id,
+                    DirectMessageDB.receiver_id == user_id,
+                )
+            )
             .order_by(desc(DirectMessageDB.created_at))
             .limit(limit)
         )
@@ -523,7 +566,7 @@ async def get_direct_messages(
     "/dm",
     response_model=DirectMessage,
     summary="Send a direct message",
-    description="**user_id** is the sender. **receiver_id** in body is the other party (user or bot).",
+    description="The sender is the signed-in caller. **receiver_id** in body is the other party (user or bot).",
     responses={
         400: {"model": ErrorResponse, "description": "Blocked by moderation"},
         403: {"model": ErrorResponse, "description": "Blocked by recipient"},
@@ -532,11 +575,17 @@ async def get_direct_messages(
 )
 @handle_errors(default_error=DatabaseError)
 async def send_direct_message(
-    user_id: UUID,
     request: SendDirectMessageRequest,
-    is_bot: bool = False
+    current_user: CurrentUser,
 ):
-    """Send a direct message to a bot or user."""
+    """Send a direct message to a bot or user.
+
+    HIVE-003: the sender is the bearer-token user. The old `is_bot` flag let a
+    caller skip both the block check and moderation by self-declaring as a bot.
+    """
+    user_id = current_user.id
+    is_bot = False
+
     # If sender is a bot, check if receiver has blocked them
     if is_bot:
         is_blocked = await blocking_service.is_blocked(request.receiver_id, user_id)

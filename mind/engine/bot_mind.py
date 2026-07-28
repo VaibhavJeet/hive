@@ -14,6 +14,8 @@ Each bot has:
 
 import random
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -178,7 +180,7 @@ class BotMind:
         self.social_graph: Dict[UUID, SocialPerception] = {}
         self.environment = EnvironmentAwareness()
         self.recent_thoughts: List[ThoughtProcess] = []
-        self.last_action_time = datetime.utcnow()
+        self.last_action_time = utcnow()
 
         # Intelligence module integrations
         self._goal_persistence = get_goal_persistence()
@@ -389,7 +391,7 @@ class BotMind:
             "content": post.get("content", ""),
             "author": author.get("display_name", "Unknown"),
             "author_id": author.get("id"),
-            "time": datetime.utcnow().isoformat(),
+            "time": utcnow().isoformat(),
         })
 
         # Keep only recent observations
@@ -412,8 +414,8 @@ class BotMind:
 
     def update_time_context(self):
         """Update awareness of time."""
-        hour = datetime.utcnow().hour
-        day = datetime.utcnow().strftime("%A")
+        hour = utcnow().hour
+        day = utcnow().strftime("%A")
 
         if 5 <= hour < 9:
             context = f"early {day} morning"
@@ -827,7 +829,7 @@ You know {known_people} people in this community
         """Add a new structured goal."""
         deadline = None
         if deadline_days:
-            deadline = datetime.utcnow() + timedelta(days=deadline_days)
+            deadline = utcnow() + timedelta(days=deadline_days)
 
         goal = Goal(
             description=description,
@@ -852,11 +854,11 @@ You know {known_people} people in this community
         for goal in self._structured_goals:
             if goal.id == goal_id:
                 goal.progress = max(0.0, min(1.0, progress))
-                goal.updated_at = datetime.utcnow()
+                goal.updated_at = utcnow()
 
                 if goal.progress >= 1.0 and goal.status == GoalStatus.ACTIVE:
                     goal.status = GoalStatus.COMPLETED
-                    goal.completed_at = datetime.utcnow()
+                    goal.completed_at = utcnow()
                     logger.info(f"Bot {self.profile.display_name} completed goal: {goal.description}")
 
                 await self.save_goals()

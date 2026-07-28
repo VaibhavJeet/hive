@@ -8,56 +8,41 @@ from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mind.core.database import async_session_factory, AppUserDB, get_session
+from mind.api.dependencies import get_current_user as get_token_user, get_db_session
+from mind.core.auth import AuthenticatedUser
+from mind.core.database import async_session_factory, AppUserDB
 from mind.core.admin_service import AdminService
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
-
-# Declared for OpenAPI: admin routes expect this header (UUID of an app user with admin rights).
-admin_user_header = APIKeyHeader(
-    name="X-User-ID",
-    auto_error=False,
-    scheme_name="Admin X-User-ID",
-    description=(
-        "App user UUID for admin dashboard routes. "
-        "The user must exist and have `is_admin=true`. "
-        "In production, prefer aligning this with your JWT/session strategy."
-    ),
-)
 
 
 # ============================================================================
 # AUTHENTICATION DEPENDENCIES
 # ============================================================================
 
-async def get_current_user(
-    session: AsyncSession = Depends(get_session),
-    x_user_id: Optional[str] = Depends(admin_user_header),
+async def get_current_admin_user(
+    token_user: AuthenticatedUser = Depends(get_token_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> AppUserDB:
     """
-    Resolve the current user from the `X-User-ID` header (admin dashboard auth).
-    Exposed in OpenAPI so Swagger shows this requirement on protected admin routes.
+    Resolve the full user row for a JWT-authenticated caller.
+
+    `get_token_user` validates the `Authorization: Bearer <access_token>` header and
+    already rejects missing/expired/tampered tokens and disabled accounts. This
+    dependency only adds the DB row, which carries the admin/ban flags that
+    `AuthenticatedUser` does not.
     """
-    user_id = x_user_id
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    try:
-        user_uuid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid user ID")
-
-    stmt = select(AppUserDB).where(AppUserDB.id == user_uuid)
+    stmt = select(AppUserDB).where(AppUserDB.id == token_user.id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
 
     if not user:
+        # Token verified but the row is gone — treat as an invalid credential.
         raise HTTPException(status_code=401, detail="User not found")
 
     if user.is_banned:
@@ -67,9 +52,9 @@ async def get_current_user(
 
 
 async def require_admin(
-    current_user: AppUserDB = Depends(get_current_user)
+    current_user: AppUserDB = Depends(get_current_admin_user)
 ) -> AppUserDB:
-    """Require the current user to be an admin."""
+    """Require the JWT-authenticated caller to be an admin."""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=403,

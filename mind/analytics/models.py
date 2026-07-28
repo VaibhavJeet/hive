@@ -4,6 +4,8 @@ Analytics data models for AI Community Companions.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Dict, Optional, Any
 from uuid import UUID
 
@@ -222,7 +224,7 @@ class PlatformMetrics:
 
     def __post_init__(self):
         if self.generated_at is None:
-            self.generated_at = datetime.utcnow()
+            self.generated_at = utcnow()
 
 
 @dataclass

@@ -14,6 +14,8 @@ to create realistic social interaction patterns.
 import logging
 from collections import defaultdict
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -510,7 +512,7 @@ class SocialGraphDiscovery:
         self._pending_fof_migrations[bot_id] = {
             'target_community_id': target_community_id,
             'bridge_ids': bridge_ids,
-            'recorded_at': datetime.utcnow(),
+            'recorded_at': utcnow(),
         }
 
     def get_pending_fof_migrations(self) -> List[Tuple[UUID, UUID, List[UUID]]]:

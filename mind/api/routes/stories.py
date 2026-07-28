@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 import html
 import re
 
+from mind.api.dependencies import CurrentUser, OptionalUser
 from mind.stories.story_service import get_story_service
 
 
@@ -128,26 +129,24 @@ class CreateStoryRequest(BaseModel):
 # ============================================================================
 
 @router.post("", response_model=StoryResponse)
-async def create_story(
-    request: CreateStoryRequest,
-    author_id: UUID,
-    author_is_bot: bool = False,
-):
+async def create_story(request: CreateStoryRequest, current_user: CurrentUser):
     """
     Create a new story.
 
-    Stories expire after the specified hours (default 24).
+    Authored by the signed-in caller. Stories expire after the specified hours
+    (default 24). `author_is_bot` was removed with the caller-supplied `author_id`
+    (HIVE-003) — bots create stories through the engine, not this endpoint.
     """
     story_service = await get_story_service()
 
     story = await story_service.create_story(
-        author_id=author_id,
+        author_id=current_user.id,
         content=request.content,
         media_url=request.media_url,
         background_color=request.background_color,
         font_style=request.font_style,
         expires_hours=request.expires_hours,
-        author_is_bot=author_is_bot,
+        author_is_bot=False,
     )
 
     # Get author info
@@ -173,20 +172,20 @@ async def create_story(
 
 @router.get("", response_model=StoryListResponse)
 async def get_stories(
-    viewer_id: Optional[UUID] = None,
+    current_user: OptionalUser,
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
 ):
     """
     Get active stories feed.
 
-    Returns stories from all users/bots that haven't expired.
-    If viewer_id is provided, includes viewed status.
+    Public. Viewed-status is computed for the signed-in caller when there is one —
+    it can no longer be requested for an arbitrary user.
     """
     story_service = await get_story_service()
 
     stories = await story_service.get_active_stories(
-        viewer_id=viewer_id,
+        viewer_id=current_user.id if current_user else None,
         limit=limit + 1,  # Get one extra to check has_more
         offset=offset,
     )
@@ -218,14 +217,23 @@ async def get_stories(
 
 
 @router.get("/{story_id}", response_model=StoryResponse)
-async def get_story(story_id: UUID):
-    """Get a single story by ID."""
+async def get_story(story_id: UUID, current_user: OptionalUser):
+    """Get a single story by ID.
+
+    HIVE-010: an expired story is only visible to its author. Stories are ephemeral
+    by contract — serving them to anyone forever defeats the entire feature.
+    """
     story_service = await get_story_service()
 
     story_data = await story_service.get_story_by_id(story_id)
 
     if not story_data:
         raise HTTPException(status_code=404, detail="Story not found")
+
+    if story_data["is_expired"]:
+        author_id = story_data["author"]["id"]
+        if not current_user or current_user.id != author_id:
+            raise HTTPException(status_code=404, detail="Story not found")
 
     return StoryResponse(
         id=story_data["id"],
@@ -244,14 +252,20 @@ async def get_story(story_id: UUID):
 @router.get("/user/{user_id}", response_model=StoryListResponse)
 async def get_user_stories(
     user_id: UUID,
+    current_user: OptionalUser,
     include_expired: bool = Query(default=False),
 ):
     """
     Get all stories from a specific user/bot.
 
-    Can optionally include expired stories.
+    HIVE-010: `include_expired` is honoured only for your own stories. It was
+    previously anonymous, so any caller could retrieve anyone's expired stories
+    indefinitely — which defeats the ephemerality the feature exists to provide.
     """
     story_service = await get_story_service()
+
+    if include_expired and (not current_user or current_user.id != user_id):
+        include_expired = False
 
     stories = await story_service.get_user_stories(
         author_id=user_id,
@@ -293,19 +307,27 @@ async def get_user_stories(
 @router.get("/{story_id}/viewers", response_model=ViewersListResponse)
 async def get_story_viewers(
     story_id: UUID,
+    current_user: CurrentUser,
     limit: int = Query(default=50, le=100),
     offset: int = Query(default=0, ge=0),
 ):
     """
-    Get list of users who viewed a story.
+    Get list of users who viewed a story. **Author only.**
 
-    Only the story author should typically have access to this.
+    HIVE-010: this docstring already said "only the story author should typically have
+    access" — but no check existed and the endpoint was anonymous, so anyone could read
+    who had viewed any story. That is a social-graph leak: it reveals who is watching
+    whom.
     """
     story_service = await get_story_service()
 
     # Verify story exists
     story = await story_service.get_story_by_id(story_id)
     if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    if story["author"]["id"] != current_user.id:
+        # 404, not 403: a non-author must not learn that the story exists.
         raise HTTPException(status_code=404, detail="Story not found")
 
     viewers = await story_service.get_viewers(
@@ -335,15 +357,12 @@ async def get_story_viewers(
 
 
 @router.post("/{story_id}/view")
-async def mark_story_viewed(
-    story_id: UUID,
-    viewer_id: UUID,
-    viewer_is_bot: bool = False,
-):
+async def mark_story_viewed(story_id: UUID, current_user: CurrentUser):
     """
-    Mark a story as viewed by a user.
+    Mark a story as viewed by the signed-in caller.
 
-    Creates a view record if not already viewed.
+    Creates a view record if not already viewed. The viewer is the bearer-token user,
+    so view counts cannot be inflated on someone else's behalf.
     """
     story_service = await get_story_service()
 
@@ -354,32 +373,30 @@ async def mark_story_viewed(
 
     recorded = await story_service.record_view(
         story_id=story_id,
-        viewer_id=viewer_id,
-        viewer_is_bot=viewer_is_bot,
+        viewer_id=current_user.id,
+        viewer_is_bot=False,
     )
 
     return {
         "status": "recorded" if recorded else "already_viewed",
         "story_id": str(story_id),
-        "viewer_id": str(viewer_id),
+        "viewer_id": str(current_user.id),
     }
 
 
 @router.delete("/{story_id}")
-async def delete_story(
-    story_id: UUID,
-    author_id: UUID,
-):
+async def delete_story(story_id: UUID, current_user: CurrentUser):
     """
     Delete a story.
 
-    Only the story author can delete their own story.
+    Only the story author can delete their own story — ownership is checked against
+    the bearer token, not a caller-supplied id.
     """
     story_service = await get_story_service()
 
     deleted = await story_service.delete_story(
         story_id=story_id,
-        author_id=author_id,
+        author_id=current_user.id,
     )
 
     if not deleted:

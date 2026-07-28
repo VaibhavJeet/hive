@@ -14,6 +14,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, Optional, List
 from uuid import UUID
 
@@ -62,10 +64,10 @@ class CivilizationLoop:
         )
 
         self.is_running = False
-        self._last_aging = datetime.utcnow()
-        self._last_culture_check = datetime.utcnow()
-        self._last_reproduction_check = datetime.utcnow()
-        self._last_ritual_check = datetime.utcnow()
+        self._last_aging = utcnow()
+        self._last_culture_check = utcnow()
+        self._last_reproduction_check = utcnow()
+        self._last_ritual_check = utcnow()
 
     async def _broadcast(self, event_type: str, data: dict):
         """Broadcast a civilization event to WebSocket clients."""
@@ -74,7 +76,7 @@ class CivilizationLoop:
                 await self.event_broadcast.put({
                     "type": event_type,
                     "data": data,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": utcnow().isoformat()
                 })
             except Exception:
                 pass  # Best-effort broadcast
@@ -111,8 +113,8 @@ class CivilizationLoop:
                 interval = 60 if self.demo_mode else 3600  # 1 min demo, 1 hour prod
                 await asyncio.sleep(interval)
 
-                hours_elapsed = (datetime.utcnow() - self._last_aging).total_seconds() / 3600
-                self._last_aging = datetime.utcnow()
+                hours_elapsed = (utcnow() - self._last_aging).total_seconds() / 3600
+                self._last_aging = utcnow()
 
                 # Age all bots
                 stats = await self.lifecycle.age_all_bots(real_hours_elapsed=hours_elapsed)
@@ -205,7 +207,7 @@ class CivilizationLoop:
             # Find recently deceased
             stmt = select(BotLifecycleDB).where(
                 BotLifecycleDB.is_alive == False,
-                BotLifecycleDB.death_date > datetime.utcnow() - timedelta(hours=2)
+                BotLifecycleDB.death_date > utcnow() - timedelta(hours=2)
             )
             result = await session.execute(stmt)
             deceased = result.scalars().all()
@@ -320,8 +322,13 @@ class CivilizationLoop:
                                                 "avatar_seed": bp.avatar_seed,
                                                 "interests": bp.interests or [],
                                             })
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    # The birth is real either way; only the display
+                                    # fields are missing, so the event still goes out.
+                                    logger.warning(
+                                        "Could not enrich birth event for %s: %s",
+                                        child_id, exc
+                                    )
                                 await self._broadcast("world_map_birth", birth_data)
 
     async def _check_elder_legacies(self):

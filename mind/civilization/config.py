@@ -15,6 +15,8 @@ Usage:
 
 import logging
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, Any
 from uuid import UUID, uuid4
 from dataclasses import dataclass, field
@@ -156,7 +158,7 @@ class CivilizationConfig:
         """Get vitality decay rate for a life stage."""
         return self.vitality_decay.get(life_stage, 0.001)
 
-    def get_life_stage(self, virtual_age_days: int) -> str:
+    def get_life_stage(self, virtual_age_days: float) -> str:
         """Determine life stage based on virtual age."""
         for stage, (min_days, max_days) in self.life_stages.items():
             if min_days <= virtual_age_days < max_days:
@@ -249,7 +251,7 @@ class CivilizationConfigManager:
         # Check cache
         if not force_reload and self._cached_config is not None:
             if self._cache_time is not None:
-                cache_age = (datetime.utcnow() - self._cache_time).total_seconds()
+                cache_age = (utcnow() - self._cache_time).total_seconds()
                 if cache_age < self._cache_ttl_seconds:
                     return self._cached_config
 
@@ -264,7 +266,7 @@ class CivilizationConfigManager:
 
                 if db_config:
                     self._cached_config = CivilizationConfig.from_db(db_config)
-                    self._cache_time = datetime.utcnow()
+                    self._cache_time = utcnow()
                     logger.debug("[CONFIG] Loaded civilization config from database")
                     return self._cached_config
         except Exception as e:
@@ -273,7 +275,7 @@ class CivilizationConfigManager:
         # Return defaults if no DB config
         if self._cached_config is None:
             self._cached_config = CivilizationConfig()
-            self._cache_time = datetime.utcnow()
+            self._cache_time = utcnow()
             logger.info("[CONFIG] Using default civilization config")
 
         return self._cached_config
@@ -325,13 +327,13 @@ class CivilizationConfigManager:
                     else:
                         logger.warning(f"[CONFIG] Unknown config key: {key}")
 
-            db_config.updated_at = datetime.utcnow()
+            db_config.updated_at = utcnow()
             await session.commit()
             await session.refresh(db_config)
 
             # Clear cache
             self._cached_config = CivilizationConfig.from_db(db_config)
-            self._cache_time = datetime.utcnow()
+            self._cache_time = utcnow()
 
             logger.info(f"[CONFIG] Updated civilization config: {list(updates.keys())}")
             return self._cached_config
@@ -367,7 +369,7 @@ class CivilizationConfigManager:
             await session.refresh(db_config)
 
             self._cached_config = CivilizationConfig.from_db(db_config)
-            self._cache_time = datetime.utcnow()
+            self._cache_time = utcnow()
 
             logger.info("[CONFIG] Created default civilization config")
             return self._cached_config

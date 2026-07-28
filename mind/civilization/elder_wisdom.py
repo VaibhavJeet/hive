@@ -15,6 +15,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any, Tuple
 from uuid import UUID
 
@@ -377,7 +379,7 @@ Tell a brief story (3-4 sentences) about what it was like in the beginning. Make
             if existing:
                 # Reinforce existing belief
                 existing.conviction = min(1.0, existing.conviction + 0.1)
-                existing.last_reinforced = datetime.utcnow()
+                existing.last_reinforced = utcnow()
             else:
                 # Create new belief for student
                 new_belief = BotBeliefDB(

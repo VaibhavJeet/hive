@@ -120,6 +120,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests requiring external services (database, redis)",
     "unit: marks unit tests that don't require external services",
+    "api: marks tests that exercise API routes",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

@@ -5,6 +5,8 @@ Allows users to report content and moderators to review and resolve reports.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import List, Optional
 from uuid import UUID, uuid4
@@ -268,7 +270,7 @@ async def resolve_report(
             return None
 
         # Update the report
-        now = datetime.utcnow()
+        now = utcnow()
         report_db.status = ReportStatus.RESOLVED.value
         report_db.resolved_at = now
         report_db.resolved_by = moderator_id
@@ -331,7 +333,7 @@ async def dismiss_report(
             return None
 
         report_db.status = ReportStatus.DISMISSED.value
-        report_db.resolved_at = datetime.utcnow()
+        report_db.resolved_at = utcnow()
         report_db.resolved_by = moderator_id
         report_db.resolution_action = ModerationAction.NO_ACTION.value
         report_db.resolution_notes = notes

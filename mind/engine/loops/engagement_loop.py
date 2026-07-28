@@ -16,6 +16,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -379,7 +381,7 @@ class EngagementLoop(BaseLoop):
 
         # Rate limit comments (reduced for more interaction)
         last_comment = self.last_comment_time.get(bot.id)
-        if last_comment and (datetime.utcnow() - last_comment).seconds < 8:
+        if last_comment and (utcnow() - last_comment).seconds < 8:
             return
 
         async with async_session_factory() as session:
@@ -399,7 +401,7 @@ class EngagementLoop(BaseLoop):
                 .join(BotProfileDB, PostDB.author_id == BotProfileDB.id)
                 .where(PostDB.community_id.in_(community_ids))
                 .where(PostDB.is_deleted == False)
-                .where(PostDB.created_at > datetime.utcnow() - timedelta(hours=24))
+                .where(PostDB.created_at > utcnow() - timedelta(hours=24))
                 .order_by(desc(PostDB.created_at))
                 .limit(5)
             )
@@ -606,7 +608,7 @@ Output ONLY your comment."""
                     engagement_type="comment"
                 )
 
-            self.last_comment_time[bot.id] = datetime.utcnow()
+            self.last_comment_time[bot.id] = utcnow()
 
             # Learn from this interaction
             learning_engine.learn_from_conversation(

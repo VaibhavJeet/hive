@@ -12,6 +12,8 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -90,7 +92,7 @@ class EmergentEventsManager:
             async with self.llm_semaphore:
                 event = await self._synthesize_event(perceptions, raw_occurrence, metadata or {})
 
-            event["occurred_at"] = datetime.utcnow().isoformat()
+            event["occurred_at"] = utcnow().isoformat()
             event["involved_bots"] = [str(b) for b in involved_bots]
             event["raw_occurrence"] = raw_occurrence
             event["perceiver_count"] = len(perceptions)
@@ -264,7 +266,7 @@ Respond authentically as yourself."""
             life_events = lifecycle.life_events or []
             life_events.append({
                 "event_name": event.get("name", "unnamed"),
-                "date": datetime.utcnow().isoformat(),
+                "date": utcnow().isoformat(),
                 "my_reflection": response.text
             })
             lifecycle.life_events = life_events[-50:]  # Keep last 50

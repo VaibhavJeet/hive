@@ -27,6 +27,8 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Dict, List, Optional, Callable
 from uuid import UUID
@@ -130,7 +132,7 @@ class ActiveGoal:
     def advance(self):
         self.current_step += 1
         self.progress = self.current_step / len(self.current_plan) if self.current_plan else 1.0
-        self.last_worked_on = datetime.utcnow()
+        self.last_worked_on = utcnow()
 
 
 @dataclass
@@ -271,17 +273,17 @@ class ConsciousMind:
         self.max_history = 100  # Reduced from 1000 to prevent memory bloat
 
         # Track when we last did various activities
-        self.last_reflection = datetime.utcnow()
-        self.last_goal_review = datetime.utcnow()
-        self.last_prediction_check = datetime.utcnow()
-        self.last_desire_check = datetime.utcnow()
+        self.last_reflection = utcnow()
+        self.last_goal_review = utcnow()
+        self.last_prediction_check = utcnow()
+        self.last_desire_check = utcnow()
 
         # Autonomous behaviors - ability to act on desires
         self.autonomous_behaviors: Optional[AutonomousBehaviors] = None
 
         # Social dynamics - relationship awareness
         self.relationship_manager: Optional[RelationshipManager] = None
-        self.last_social_perception = datetime.utcnow()
+        self.last_social_perception = utcnow()
         self.social_perceptions: List[SocialPerception] = []
 
         # Intelligence module integrations
@@ -298,10 +300,10 @@ class ConsciousMind:
         self._bot_skills: List[Skill] = []
 
         # Intelligence module timing
-        self.last_memory_decay = datetime.utcnow()
-        self.last_collaboration_check = datetime.utcnow()
-        self.last_emotional_contagion = datetime.utcnow()
-        self.last_skill_check = datetime.utcnow()
+        self.last_memory_decay = utcnow()
+        self.last_collaboration_check = utcnow()
+        self.last_emotional_contagion = utcnow()
+        self.last_skill_check = utcnow()
 
         logger.info(f"ConsciousMind initialized for {bot_name} with intelligence modules")
 
@@ -418,7 +420,7 @@ class ConsciousMind:
                 return ThoughtMode.WANDERING
 
         # Periodic reflection
-        if datetime.utcnow() - self.last_reflection > timedelta(minutes=10):
+        if utcnow() - self.last_reflection > timedelta(minutes=10):
             if random.random() < 0.3:
                 return ThoughtMode.REFLECTIVE
 
@@ -686,7 +688,7 @@ Generate your next thought authentically. This is not a response to anyone - thi
 
     async def _periodic_activities(self):
         """Periodic maintenance of conscious state"""
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Periodic reflection
         if now - self.last_reflection > timedelta(minutes=15):
@@ -767,7 +769,7 @@ Generate your next thought authentically. This is not a response to anyone - thi
 
     async def _review_goals(self):
         """Review and update active goals"""
-        now = datetime.utcnow()
+        now = utcnow()
 
         for goal in self.state.active_goals[:]:
             # Decay emotional investment over time if no progress
@@ -790,7 +792,7 @@ Generate your next thought authentically. This is not a response to anyone - thi
         """Check and resolve predictions"""
         # In a full implementation, this would check against actual outcomes
         # For now, we mark old unresolved predictions
-        now = datetime.utcnow()
+        now = utcnow()
 
         for pred in self.state.predictions:
             if not pred.resolved:
@@ -806,7 +808,7 @@ Generate your next thought authentically. This is not a response to anyone - thi
     def _update_alertness(self):
         """Update alertness based on various factors"""
         # Simulate natural alertness fluctuation
-        hour = datetime.utcnow().hour
+        hour = utcnow().hour
 
         # Lower alertness at night
         if 0 <= hour < 6:
@@ -1374,10 +1376,11 @@ Generate your next thought authentically. This is not a response to anyone - thi
                             "event_type": event_type,
                             "feeling": reaction,
                         },
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Broadcast is best-effort; the reaction itself is already recorded.
+                    logger.debug("Could not broadcast bot reaction: %s", exc)
 
             # Maybe form a desire to interact
             if want_to_respond and self.autonomous_behaviors:
@@ -1511,15 +1514,15 @@ Format:
     def add_goal(self, description: str, why: str, initial_plan: List[str] = None):
         """Add a new active goal"""
         goal = ActiveGoal(
-            goal_id=f"goal_{len(self.state.active_goals)}_{datetime.utcnow().timestamp()}",
+            goal_id=f"goal_{len(self.state.active_goals)}_{utcnow().timestamp()}",
             description=description,
             why=why,
             current_plan=initial_plan or [],
             current_step=0,
             obstacles=[],
             progress=0.0,
-            started_at=datetime.utcnow(),
-            last_worked_on=datetime.utcnow(),
+            started_at=utcnow(),
+            last_worked_on=utcnow(),
             emotional_investment=0.7
         )
         self.state.active_goals.append(goal)
@@ -1536,7 +1539,7 @@ Format:
             about=about,
             expected=expected,
             confidence=confidence,
-            made_at=datetime.utcnow()
+            made_at=utcnow()
         )
         self.state.predictions.append(pred)
         logger.debug(f"{self.bot_name} predicted: {expected} (conf: {confidence:.1%})")
@@ -1556,7 +1559,7 @@ Format:
         if opinion_of_me:
             model.perceived_opinion_of_me = opinion_of_me
 
-        model.last_updated = datetime.utcnow()
+        model.last_updated = utcnow()
 
     def register_action_callback(self, callback: Callable):
         """Register a callback for when consciousness produces actions"""

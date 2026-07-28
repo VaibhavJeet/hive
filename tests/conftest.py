@@ -10,6 +10,14 @@ This module provides:
 - API test client fixtures
 """
 
+import os
+
+# Must precede any `mind` import: mind.config.settings instantiates its singleton at
+# import time, and several behaviours key off ENVIRONMENT (notably the in-memory rate
+# limiter, which otherwise accumulates across the whole session and makes results
+# depend on test order). CI already sets this; this makes local runs match.
+os.environ.setdefault("AIC_ENVIRONMENT", "test")
+
 import pytest
 import asyncio
 from uuid import uuid4

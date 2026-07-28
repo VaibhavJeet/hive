@@ -5,6 +5,8 @@ Simulates realistic emotional dynamics that influence bot behavior.
 
 import random
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List, Tuple
 from uuid import UUID
 from enum import Enum
@@ -200,7 +202,7 @@ class EmotionalEngine:
             stress_level=new_stress,
             excitement_level=new_excitement,
             social_battery=new_social,
-            last_updated=datetime.utcnow()
+            last_updated=utcnow()
         )
 
     def _calculate_sensitivity(self, personality: PersonalityTraits) -> Dict[str, float]:
@@ -352,7 +354,7 @@ class EmotionalEngine:
             stress_level=new_stress,
             excitement_level=new_excitement,
             social_battery=new_social,
-            last_updated=datetime.utcnow()
+            last_updated=utcnow()
         )
 
     def get_behavior_modifiers(

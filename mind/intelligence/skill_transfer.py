@@ -19,6 +19,8 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Any, Tuple
 from uuid import UUID, uuid4
@@ -143,7 +145,7 @@ class Skill:
             times_taught=data.get("times_taught", 0),
             success_rate=data.get("success_rate", 0.5),
             learned_from=data.get("learned_from"),
-            learned_at=datetime.fromisoformat(data["learned_at"]) if data.get("learned_at") else datetime.utcnow(),
+            learned_at=datetime.fromisoformat(data["learned_at"]) if data.get("learned_at") else utcnow(),
             transfer_method=TransferMethod(data.get("transfer_method", "self_learned")),
             is_transferable=data.get("is_transferable", True),
             transfer_difficulty=data.get("transfer_difficulty", 0.5),
@@ -604,7 +606,7 @@ class SkillTransferManager:
         teacher_skill.times_taught += 1
 
         # Complete session
-        session.completed_at = datetime.utcnow()
+        session.completed_at = utcnow()
         session.duration_minutes = random.randint(10, 30)
 
         # Store session
@@ -1016,7 +1018,7 @@ class SkillTransferManager:
                     db_skill.times_used = skill.times_used
                     db_skill.success_rate = skill.success_rate
                     db_skill.learned_from = skill.learned_from
-                    db_skill.updated_at = datetime.utcnow()
+                    db_skill.updated_at = utcnow()
                 else:
                     # Create new
                     new_db_skill = BotSkillDB(
@@ -1275,7 +1277,7 @@ class SkillTransferManager:
             return False
 
         request.status = "accepted"
-        request.responded_at = datetime.utcnow()
+        request.responded_at = utcnow()
 
         logger.info(f"Mentorship {request_id} accepted by {mentor_id}")
         return True
@@ -1307,7 +1309,7 @@ class SkillTransferManager:
         # Check if complete
         if request.sessions_completed >= request.total_sessions:
             request.status = "completed"
-            request.completed_at = datetime.utcnow()
+            request.completed_at = utcnow()
 
             # Transfer the skill
             transferred = await self.transfer_skill(

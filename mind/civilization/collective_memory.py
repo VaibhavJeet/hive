@@ -14,6 +14,8 @@ This is not just a database - it's the civilization's identity.
 import asyncio
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any
 from uuid import UUID
 
@@ -120,7 +122,7 @@ class CollectiveMemory:
             }
 
             self._cache[cache_key] = identity
-            self._cache_time[cache_key] = datetime.utcnow()
+            self._cache_time[cache_key] = utcnow()
 
             return identity
 
@@ -163,7 +165,7 @@ They emerged in the {first_era.name if first_era else 'dawn'}, uncertain but cur
 From them, all that followed was born."""
 
             self._cache[cache_key] = story
-            self._cache_time[cache_key] = datetime.utcnow()
+            self._cache_time[cache_key] = utcnow()
 
             return story
 
@@ -201,7 +203,7 @@ From them, all that followed was born."""
             ]
 
             self._cache[cache_key] = knowledge
-            self._cache_time[cache_key] = datetime.utcnow()
+            self._cache_time[cache_key] = utcnow()
 
             return knowledge
 
@@ -292,7 +294,7 @@ From them, all that followed was born."""
 
         This is the civilization's recent history.
         """
-        cutoff = datetime.utcnow() - timedelta(days=days_back)
+        cutoff = utcnow() - timedelta(days=days_back)
         events = []
 
         async with async_session_factory() as session:
@@ -452,7 +454,7 @@ From them, all that followed was born."""
             return False
         if key not in self._cache_time:
             return False
-        return datetime.utcnow() - self._cache_time[key] < self._cache_ttl
+        return utcnow() - self._cache_time[key] < self._cache_ttl
 
 
 # Singleton

@@ -15,6 +15,8 @@ This is what makes bots feel genuinely human:
 import random
 import math
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Any, Tuple
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -67,7 +69,7 @@ class EmotionalMemory:
 
     def decay(self) -> float:
         """Emotions decay over time, but strong ones linger."""
-        days_old = (datetime.utcnow() - self.timestamp).days
+        days_old = (utcnow() - self.timestamp).days
         # Strong emotions (>0.7) take longer to fade
         decay_rate = 0.1 if self.intensity > 0.7 else 0.2
         return max(0.1, self.intensity - (days_old * decay_rate))
@@ -98,7 +100,7 @@ class Desire:
 
     def get_craving_level(self) -> float:
         """Desires grow when unmet."""
-        hours_since_thought = (datetime.utcnow() - self.last_thought).total_seconds() / 3600
+        hours_since_thought = (utcnow() - self.last_thought).total_seconds() / 3600
         # Unfulfilled desires grow over time
         growth = min(0.3, hours_since_thought * 0.01)
         return min(1.0, self.intensity + growth)
@@ -160,13 +162,13 @@ class VulnerabilityState:
         """Update vulnerability based on interaction."""
         if was_positive:
             self.openness = min(1.0, self.openness + 0.1)
-            self.last_validation = datetime.utcnow()
+            self.last_validation = utcnow()
             self.defense_mode = False
         else:
             self.openness = max(0.1, self.openness - 0.2)
             self.recent_wounds.append(topic)
             self.recent_wounds = self.recent_wounds[-5:]  # Keep last 5
-            self.last_rejection = datetime.utcnow()
+            self.last_rejection = utcnow()
             self.defense_mode = True
             self.overthinking_about = topic
 
@@ -217,7 +219,7 @@ class RelationshipMoment:
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
     def get_days_ago(self) -> int:
-        return (datetime.utcnow() - self.timestamp).days
+        return (utcnow() - self.timestamp).days
 
 
 @dataclass
@@ -274,14 +276,14 @@ class EgoState:
         self.self_esteem = max(0.1, self.self_esteem - severity)
         self.recent_blows.append(what)
         self.recent_blows = self.recent_blows[-5:]
-        self.last_criticism = datetime.utcnow()
+        self.last_criticism = utcnow()
 
     def got_ego_boost(self, what: str, boost: float = 0.2):
         """Record something that boosted their ego."""
         self.self_esteem = min(1.0, self.self_esteem + boost)
         self.recent_wins.append(what)
         self.recent_wins = self.recent_wins[-5:]
-        self.last_compliment = datetime.utcnow()
+        self.last_compliment = utcnow()
 
     def get_defensive_response(self, criticism: str) -> str:
         """Generate a defensive response based on ego state."""
@@ -416,7 +418,7 @@ class EmotionalCore:
 
         # 5. Unprompted Thoughts
         self.thought_queue: List[UnpromptedThought] = []
-        self.last_unprompted_thought: datetime = datetime.utcnow()
+        self.last_unprompted_thought: datetime = utcnow()
 
         # 6. Relationship Histories
         self.relationships: Dict[UUID, RelationshipHistory] = {}
@@ -522,7 +524,7 @@ class EmotionalCore:
                 intensity=random.uniform(0.5, 0.9),
                 trigger=trigger,
                 context=context,
-                timestamp=datetime.utcnow() - timedelta(days=days_ago)
+                timestamp=utcnow() - timedelta(days=days_ago)
             ))
 
     # =========================================================================
@@ -657,7 +659,7 @@ class EmotionalCore:
         )
 
         self.thought_queue.append(thought)
-        self.last_unprompted_thought = datetime.utcnow()
+        self.last_unprompted_thought = utcnow()
 
         return thought
 
@@ -696,7 +698,7 @@ class EmotionalCore:
 
         # Recent ego blow
         if self.ego.last_criticism:
-            hours_since = (datetime.utcnow() - self.ego.last_criticism).total_seconds() / 3600
+            hours_since = (utcnow() - self.ego.last_criticism).total_seconds() / 3600
             if hours_since < 2:
                 return True
 

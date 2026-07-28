@@ -7,6 +7,8 @@ This ensures bots remember their identity, perceptions, and learnings across res
 
 import logging
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, Any
 from uuid import UUID
 from dataclasses import asdict
@@ -70,7 +72,7 @@ class BotPersistence:
                     existing.current_mood = mind_data.get("current_mood", "neutral")
                     existing.current_energy = BotPersistence._energy_to_float(mind_data.get("current_energy", 0.7))
                     existing.inner_monologue = mind_data.get("inner_monologue", [])[-10:]  # Keep last 10
-                    existing.updated_at = datetime.utcnow()
+                    existing.updated_at = utcnow()
                 else:
                     # Create new
                     mind_state = BotMindStateDB(
@@ -176,7 +178,7 @@ class BotPersistence:
                     existing.evolution_count = learning_data.get("evolution_count", 0)
                     existing.last_reflection = learning_data.get("last_reflection")
                     existing.last_evolution = learning_data.get("last_evolution")
-                    existing.updated_at = datetime.utcnow()
+                    existing.updated_at = utcnow()
                 else:
                     learning_state = BotLearningStateDB(
                         bot_id=bot_id,

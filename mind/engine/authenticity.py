@@ -18,6 +18,8 @@ import math
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID
@@ -60,13 +62,13 @@ class BotPresence:
         return self.status in [PresenceStatus.ONLINE, PresenceStatus.BUSY]
 
     def time_since_last_activity(self) -> timedelta:
-        return datetime.utcnow() - self.last_activity
+        return utcnow() - self.last_activity
 
     def should_go_offline(self) -> bool:
         """Check if bot should end their session."""
         if not self.session_start:
             return True
-        session_length = (datetime.utcnow() - self.session_start).total_seconds() / 60
+        session_length = (utcnow() - self.session_start).total_seconds() / 60
         return session_length >= self.session_duration_minutes
 
 
@@ -115,21 +117,21 @@ class PresenceManager:
         duration_modifier = 1.0 + (extraversion * 0.5)  # 1.0x to 1.5x
 
         # Peak hours = longer sessions
-        current_hour = datetime.utcnow().hour
+        current_hour = utcnow().hour
         peak_hours = activity_pattern.get("peak_activity_hours", [12, 13, 18, 19, 20])
         if current_hour in peak_hours:
             duration_modifier *= 1.3
 
         # Weekend modifier
-        if datetime.utcnow().weekday() >= 5:
+        if utcnow().weekday() >= 5:
             duration_modifier *= activity_pattern.get("weekend_activity_multiplier", 1.2)
 
         session_duration = int(base_duration * duration_modifier)
 
         presence.status = PresenceStatus.ONLINE
-        presence.session_start = datetime.utcnow()
+        presence.session_start = utcnow()
         presence.session_duration_minutes = session_duration
-        presence.last_seen = datetime.utcnow()
+        presence.last_seen = utcnow()
         presence.posts_seen_this_session = 0
         presence.posts_engaged_this_session = 0
         presence.messages_sent_this_session = 0
@@ -141,7 +143,7 @@ class PresenceManager:
         """End a bot's online session."""
         presence = self.get_presence(bot_id)
         presence.status = PresenceStatus.OFFLINE
-        presence.last_seen = datetime.utcnow()
+        presence.last_seen = utcnow()
         presence.current_action = None
         presence.session_start = None
 
@@ -154,19 +156,19 @@ class PresenceManager:
         """Set what the bot is currently doing."""
         presence = self.get_presence(bot_id)
         presence.current_action = action
-        presence.last_activity = datetime.utcnow()
+        presence.last_activity = utcnow()
 
     def record_post_seen(self, bot_id: UUID) -> None:
         """Record that bot saw a post."""
         presence = self.get_presence(bot_id)
         presence.posts_seen_this_session += 1
-        presence.last_activity = datetime.utcnow()
+        presence.last_activity = utcnow()
 
     def record_engagement(self, bot_id: UUID) -> None:
         """Record that bot engaged with something."""
         presence = self.get_presence(bot_id)
         presence.posts_engaged_this_session += 1
-        presence.last_activity = datetime.utcnow()
+        presence.last_activity = utcnow()
 
     def get_online_bots(self) -> List[UUID]:
         """Get list of currently online bots."""
@@ -664,7 +666,7 @@ class RealisticTimingManager:
         if last_time is None:
             return True
 
-        elapsed = (datetime.utcnow() - last_time).total_seconds()
+        elapsed = (utcnow() - last_time).total_seconds()
         return elapsed >= min_interval_seconds
 
     def record_action(self, bot_id: UUID, action_type: str) -> None:
@@ -677,7 +679,7 @@ class RealisticTimingManager:
         }
 
         if action_type in trackers:
-            trackers[action_type][bot_id] = datetime.utcnow()
+            trackers[action_type][bot_id] = utcnow()
 
 
 # =============================================================================
@@ -739,7 +741,7 @@ class AuthenticityEngine:
         - Peak activity hours
         - Random session patterns
         """
-        current_hour = datetime.utcnow().hour
+        current_hour = utcnow().hour
 
         # Check wake/sleep schedule
         wake_time = int(activity_pattern.get("wake_time", "08:00").split(":")[0])
@@ -811,8 +813,13 @@ class AuthenticityEngine:
                 if get_relationship_closeness and author_id:
                     try:
                         relationship_closeness = await get_relationship_closeness(bot_id, author_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # Falls back to 0.0 (strangers), which silently changes who the
+                        # bot engages with — worth seeing in the logs.
+                        logger.debug(
+                            "Closeness lookup failed for %s -> %s: %s",
+                            bot_id, author_id, exc
+                        )
 
                 # Create engagement context
                 context = EngagementContext(
@@ -822,7 +829,7 @@ class AuthenticityEngine:
                     author_name=post.get("author_name", ""),
                     interest_score=post.get("interest_score", 0.5),
                     relationship_closeness=relationship_closeness,
-                    time_since_posted=datetime.utcnow() - post.get("created_at", datetime.utcnow()),
+                    time_since_posted=utcnow() - post.get("created_at", utcnow()),
                     current_engagement={
                         "like_count": post.get("like_count", 0),
                         "comment_count": post.get("comment_count", 0)

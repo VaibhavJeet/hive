@@ -11,6 +11,8 @@ Provides comprehensive analytics dashboard endpoints including:
 """
 
 from datetime import datetime, timedelta, date
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any, Literal
 from uuid import UUID
 from enum import Enum
@@ -34,7 +36,7 @@ from mind.core.database import (
 )
 from mind.api.dependencies import get_current_user, get_optional_user
 from mind.core.auth import AuthenticatedUser
-from mind.api.routes.admin import require_admin as require_admin_header
+from mind.api.routes.admin import require_admin
 from mind.analytics import (
     AnalyticsTracker,
     AnalyticsAggregator,
@@ -573,7 +575,7 @@ async def verify_admin(user: AuthenticatedUser) -> AuthenticatedUser:
 
 @admin_router.get("/platform", response_model=PlatformMetricsResponse)
 async def get_platform_metrics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=90, description="Analysis period in days")
 ):
     """
@@ -612,13 +614,13 @@ async def get_platform_metrics(
         total_sessions_today=metrics.total_sessions_today,
         avg_session_duration_minutes=round(metrics.avg_session_duration / 60, 2),
         period_days=days,
-        generated_at=metrics.generated_at or datetime.utcnow()
+        generated_at=metrics.generated_at or utcnow()
     )
 
 
 @admin_router.get("/bots", response_model=List[BotPerformanceResponse])
 async def get_all_bot_analytics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=30, description="Analysis period in days"),
     limit: int = Query(default=20, ge=1, le=100, description="Maximum bots to return")
 ):
@@ -652,7 +654,7 @@ async def get_all_bot_analytics(
 
 @admin_router.get("/trends", response_model=List[TrendingContentResponse])
 async def get_trending_content(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     hours: int = Query(default=24, ge=1, le=168, description="Timeframe in hours"),
     limit: int = Query(default=20, ge=1, le=50, description="Maximum items to return")
 ):
@@ -688,7 +690,7 @@ async def get_trending_content(
 
 @admin_router.get("/engagement-by-hour", response_model=TimeSeriesDataResponse)
 async def get_engagement_by_hour(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=30, description="Analysis period in days")
 ):
     """
@@ -713,7 +715,7 @@ async def get_engagement_by_hour(
 
 @admin_router.get("/daily", response_model=List[DailyMetricsResponse])
 async def get_daily_metrics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=30, ge=1, le=90, description="Number of days to retrieve")
 ):
     """
@@ -747,7 +749,7 @@ def parse_date_range(
         except ValueError:
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     else:
-        end_dt = datetime.utcnow()
+        end_dt = utcnow()
 
     if start_date:
         try:
@@ -1443,7 +1445,7 @@ async def get_realtime_metrics(
     """
     await verify_admin(current_user)
 
-    now = datetime.utcnow()
+    now = utcnow()
     one_hour_ago = now - timedelta(hours=1)
     five_min_ago = now - timedelta(minutes=5)
     fifteen_min_ago = now - timedelta(minutes=15)
@@ -1599,7 +1601,7 @@ async def get_activity_heatmap(
     - peak_hour: Hour with highest overall activity
     - peak_day: Day of week with highest overall activity
     """
-    now = datetime.utcnow()
+    now = utcnow()
     cutoff = now - timedelta(days=days)
 
     # Initialize heatmap grid: heatmap[day_of_week][hour] = count

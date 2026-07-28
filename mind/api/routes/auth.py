@@ -3,6 +3,8 @@ Authentication API routes - User registration, login, token refresh, and logout.
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -229,7 +231,7 @@ async def register(request: RegisterRequest):
         refresh_token_record = RefreshTokenDB(
             user_id=user.id,
             token_hash=hash_password(tokens.refresh_token),
-            expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         session.add(refresh_token_record)
         await session.commit()
@@ -306,12 +308,12 @@ async def login(request: LoginRequest):
         refresh_token_record = RefreshTokenDB(
             user_id=user.id,
             token_hash=hash_password(tokens.refresh_token),
-            expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+            expires_at=utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         session.add(refresh_token_record)
 
         # Update last active
-        user.last_active = datetime.utcnow()
+        user.last_active = utcnow()
         await session.commit()
 
         return AuthResponse(
@@ -435,7 +437,7 @@ async def logout(request: LogoutRequest):
         for token in tokens:
             if verify_password(request.refresh_token, token.token_hash):
                 token.is_revoked = True
-                token.revoked_at = datetime.utcnow()
+                token.revoked_at = utcnow()
                 break
 
         await session.commit()

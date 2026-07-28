@@ -6,9 +6,12 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from mind.api.dependencies import CurrentUser
+from mind.api.routes.admin import require_admin
+from mind.core.database import AppUserDB
 from mind.notifications.notification_service import (
     get_notification_service,
     NotificationService,
@@ -77,16 +80,17 @@ class PushConfigResponse(BaseModel):
 
 @router.get("", response_model=NotificationListResponse)
 async def get_notifications(
-    user_id: UUID,
+    current_user: CurrentUser,
     unread_only: bool = Query(default=False, description="Only return unread notifications"),
     limit: int = Query(default=50, le=100, description="Maximum notifications to return"),
     offset: int = Query(default=0, ge=0, description="Number of notifications to skip"),
 ):
     """
-    Get notifications for a user.
+    Get the signed-in user's notifications.
 
     Returns a paginated list of notifications with unread count.
     """
+    user_id = current_user.id
     service = get_notification_service()
 
     notifications = await service.get_notifications(
@@ -118,20 +122,21 @@ async def get_notifications(
 
 
 @router.get("/unread-count")
-async def get_unread_count(user_id: UUID):
-    """Get count of unread notifications for a user."""
+async def get_unread_count(current_user: CurrentUser):
+    """Get count of unread notifications for the signed-in user."""
     service = get_notification_service()
-    count = await service.get_unread_count(user_id)
+    count = await service.get_unread_count(current_user.id)
     return {"unread_count": count}
 
 
 @router.post("/{notification_id}/read", response_model=MarkReadResponse)
-async def mark_notification_read(notification_id: UUID):
+async def mark_notification_read(notification_id: UUID, current_user: CurrentUser):
     """
-    Mark a single notification as read.
+    Mark one of the signed-in user's notifications as read.
     """
     service = get_notification_service()
-    success = await service.mark_as_read(notification_id)
+    # Scoped to the caller: someone else's notification 404s instead of being written.
+    success = await service.mark_as_read(notification_id, owner_id=current_user.id)
 
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -140,23 +145,54 @@ async def mark_notification_read(notification_id: UUID):
 
 
 @router.post("/read-all", response_model=MarkReadResponse)
-async def mark_all_notifications_read(user_id: UUID):
+async def mark_all_notifications_read(current_user: CurrentUser):
     """
-    Mark all notifications for a user as read.
+    Mark all of the signed-in user's notifications as read.
     """
     service = get_notification_service()
-    count = await service.mark_all_read(user_id)
+    count = await service.mark_all_read(current_user.id)
 
     return MarkReadResponse(success=True, marked_count=count)
 
 
-@router.delete("/{notification_id}")
-async def delete_notification(notification_id: UUID):
+@router.delete("/subscribe", response_model=PushSubscriptionResponse)
+async def unsubscribe_from_push(
+    current_user: CurrentUser,
+    endpoint: str = Query(..., description="Push service endpoint URL to unregister"),
+):
     """
-    Delete a notification.
+    Unregister a push notification subscription.
+
+    Call this when the user revokes notification permission or logs out.
+    """
+    push_service = get_push_service()
+
+    success = await push_service.unregister_device(
+        user_id=current_user.id,
+        endpoint=endpoint,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found"
+        )
+
+    return PushSubscriptionResponse(
+        success=True,
+        message="Push subscription removed successfully",
+    )
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(notification_id: UUID, current_user: CurrentUser):
+    """
+    Delete one of the signed-in user's notifications.
     """
     service = get_notification_service()
-    success = await service.delete_notification(notification_id)
+    success = await service.delete_notification(
+        notification_id, owner_id=current_user.id
+    )
 
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -165,12 +201,12 @@ async def delete_notification(notification_id: UUID):
 
 
 @router.delete("")
-async def delete_all_notifications(user_id: UUID):
+async def delete_all_notifications(current_user: CurrentUser):
     """
-    Delete all notifications for a user.
+    Delete all of the signed-in user's notifications.
     """
     service = get_notification_service()
-    count = await service.delete_all_notifications(user_id)
+    count = await service.delete_all_notifications(current_user.id)
 
     return {"success": True, "deleted_count": count}
 
@@ -196,8 +232,8 @@ async def get_push_config():
 
 @router.post("/subscribe", response_model=PushSubscriptionResponse)
 async def subscribe_to_push(
-    user_id: UUID,
     request: PushSubscriptionRequest,
+    current_user: CurrentUser,
 ):
     """
     Register a push notification subscription for a user's device.
@@ -220,46 +256,22 @@ async def subscribe_to_push(
             detail="Subscription keys must contain 'p256dh' and 'auth'"
         )
 
-    await push_service.register_device(
-        user_id=user_id,
-        subscription={
-            "endpoint": request.endpoint,
-            "keys": request.keys,
-        },
-    )
+    try:
+        await push_service.register_device(
+            user_id=current_user.id,
+            subscription={
+                "endpoint": request.endpoint,
+                "keys": request.keys,
+            },
+        )
+    except PermissionError as exc:
+        # The endpoint is registered to another account and the caller could not
+        # present its keys — see HIVE-009.
+        raise HTTPException(status_code=403, detail=str(exc))
 
     return PushSubscriptionResponse(
         success=True,
         message="Push subscription registered successfully",
-    )
-
-
-@router.delete("/subscribe", response_model=PushSubscriptionResponse)
-async def unsubscribe_from_push(
-    user_id: UUID,
-    endpoint: str = Query(..., description="Push service endpoint URL to unregister"),
-):
-    """
-    Unregister a push notification subscription.
-
-    Call this when the user revokes notification permission or logs out.
-    """
-    push_service = get_push_service()
-
-    success = await push_service.unregister_device(
-        user_id=user_id,
-        endpoint=endpoint,
-    )
-
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found"
-        )
-
-    return PushSubscriptionResponse(
-        success=True,
-        message="Push subscription removed successfully",
     )
 
 
@@ -273,10 +285,13 @@ async def send_notification(
     type: str,
     title: str,
     body: str,
+    admin: AppUserDB = Depends(require_admin),
     data: Optional[dict] = None,
 ):
     """
     Send a notification to a user (admin/internal use).
+
+    `user_id` is the *recipient*. The caller is the admin named by the bearer token.
 
     This endpoint can be used for testing or for system notifications.
     """

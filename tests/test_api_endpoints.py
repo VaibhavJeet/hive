@@ -279,8 +279,13 @@ class TestPostEndpoints:
 
         assert response.status_code in [200, 404, 500]
 
-    def test_like_post(self, api_client):
-        """Test liking a post."""
+    def test_like_post_requires_authentication(self, api_client):
+        """Liking requires a bearer token (HIVE-003).
+
+        This test previously passed `user_id` in the body and accepted a 2xx — i.e. it
+        asserted the impersonation bug. The actor is now the token user, so an
+        anonymous call must be rejected outright.
+        """
         fake_post_id = str(uuid4())
         fake_user_id = str(uuid4())
         response = api_client.post(
@@ -288,14 +293,14 @@ class TestPostEndpoints:
             json={"user_id": fake_user_id}
         )
 
-        assert response.status_code in [200, 201, 400, 404, 422, 500]
+        assert response.status_code == 401
 
 
 class TestInteractionEndpoints:
     """Test interaction-related endpoints."""
 
-    def test_create_comment(self, api_client):
-        """Test creating a comment."""
+    def test_create_comment_requires_authentication(self, api_client):
+        """Commenting requires a bearer token (HIVE-003). See test_like_post above."""
         fake_post_id = str(uuid4())
         fake_user_id = str(uuid4())
         response = api_client.post(
@@ -306,7 +311,7 @@ class TestInteractionEndpoints:
             }
         )
 
-        assert response.status_code in [200, 201, 400, 404, 422, 500]
+        assert response.status_code == 401
 
     def test_share_post(self, api_client):
         """Test sharing a post."""

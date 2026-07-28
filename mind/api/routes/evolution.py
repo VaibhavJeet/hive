@@ -3,10 +3,12 @@ Evolution & Intelligence API - Exposes bot learning, consciousness, and developm
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from sqlalchemy import select, desc
@@ -20,6 +22,13 @@ from mind.engine.bot_self_coding import get_self_coder_manager
 # from mind.engine.bot_github import get_github_manager
 from mind.config.settings import settings
 
+from mind.api.routes.admin import require_admin
+from mind.core.database import AppUserDB
+
+# HIVE-014: the four read endpoints stay public — bot intelligence is part of what the
+# portal exists to show. The three `trigger-*` endpoints and the GitHub status probe are
+# admin-only: they spend LLM tokens on demand, and one of them makes a bot write and
+# execute code.
 router = APIRouter(prefix="/evolution", tags=["evolution"])
 
 
@@ -174,7 +183,7 @@ async def get_bot_intelligence(bot_id: UUID):
                 before=e.get("before", ""),
                 after=e.get("after", ""),
                 reason=e.get("reason", ""),
-                timestamp=datetime.fromisoformat(e["timestamp"]) if e.get("timestamp") else datetime.utcnow()
+                timestamp=datetime.fromisoformat(e["timestamp"]) if e.get("timestamp") else utcnow()
             ))
 
         return BotIntelligenceResponse(
@@ -285,7 +294,7 @@ async def get_recent_evolution_activity(limit: int = Query(default=20, le=50)):
                 "type": "evolution",
                 "subtype": evt.get("type", "unknown"),
                 "content": f"{evt.get('after', '')} - {evt.get('reason', '')}",
-                "timestamp": evt.get("timestamp", datetime.utcnow().isoformat())
+                "timestamp": evt.get("timestamp", utcnow().isoformat())
             })
 
     # Sort by timestamp
@@ -294,7 +303,10 @@ async def get_recent_evolution_activity(limit: int = Query(default=20, le=50)):
 
 
 @router.post("/bots/{bot_id}/trigger-reflection")
-async def trigger_bot_reflection(bot_id: UUID):
+async def trigger_bot_reflection(
+    bot_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Manually trigger a bot to reflect on its experiences."""
     async with async_session_factory() as session:
         stmt = select(BotProfileDB).where(BotProfileDB.id == bot_id)
@@ -343,7 +355,10 @@ async def trigger_bot_reflection(bot_id: UUID):
 
 
 @router.post("/bots/{bot_id}/trigger-evolution")
-async def trigger_bot_evolution(bot_id: UUID):
+async def trigger_bot_evolution(
+    bot_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Manually trigger evolution for a bot."""
     async with async_session_factory() as session:
         stmt = select(BotProfileDB).where(BotProfileDB.id == bot_id)
@@ -400,8 +415,32 @@ async def trigger_bot_evolution(bot_id: UUID):
 
 
 @router.post("/bots/{bot_id}/trigger-self-coding")
-async def trigger_bot_self_coding(bot_id: UUID, what_to_improve: str = "general intelligence"):
-    """Trigger a bot to write code to improve itself."""
+async def trigger_bot_self_coding(
+    bot_id: UUID,
+    admin: AppUserDB = Depends(require_admin),
+    what_to_improve: str = "general intelligence",
+):
+    """Trigger a bot to write code to improve itself. **Admin only, disabled by default.**
+
+    ⚠️ HIVE-014 / HIVE-032. `what_to_improve` is interpolated verbatim into the prompt
+    that produces the code (`bot_self_coding.py:226`), and the result is `exec()`d in
+    this process behind a substring denylist that string concatenation defeats. Caller
+    text therefore reaches code execution.
+
+    Gating this on admin removes anonymous reachability, but an admin-only RCE is still
+    an RCE and admin tokens leak. The endpoint is off unless
+    `AIC_SELF_CODING_HTTP_TRIGGER_ENABLED=true` is set explicitly. Leave it off until
+    HIVE-032 replaces the sandbox; the engine's own self-coding loop is unaffected.
+    """
+    if not settings.SELF_CODING_HTTP_TRIGGER_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Manual self-coding trigger is disabled. Set "
+                "AIC_SELF_CODING_HTTP_TRIGGER_ENABLED=true to enable it (see HIVE-032)."
+            ),
+        )
+
     async with async_session_factory() as session:
         stmt = select(BotProfileDB).where(BotProfileDB.id == bot_id)
         result = await session.execute(stmt)
@@ -467,7 +506,7 @@ async def trigger_bot_self_coding(bot_id: UUID, what_to_improve: str = "general 
 
 
 @router.get("/github/status")
-async def get_github_status():
+async def get_github_status(admin: AppUserDB = Depends(require_admin)):
     """Get GitHub integration status - currently disabled."""
     # GitHub integration disabled for now - will enable later
     return {

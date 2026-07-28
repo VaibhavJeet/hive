@@ -4,6 +4,8 @@ Analytics tracker for real-time event tracking.
 
 import logging
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Optional
 from uuid import UUID
 
@@ -72,7 +74,7 @@ class AnalyticsTracker:
 
                 if existing:
                     # Update view time
-                    existing.last_viewed_at = datetime.utcnow()
+                    existing.last_viewed_at = utcnow()
                     existing.view_count += 1
                     await session.commit()
                     return False
@@ -82,8 +84,8 @@ class AnalyticsTracker:
                     post_id=post_id,
                     viewer_id=viewer_id,
                     viewer_is_bot=viewer_is_bot,
-                    viewed_at=datetime.utcnow(),
-                    last_viewed_at=datetime.utcnow(),
+                    viewed_at=utcnow(),
+                    last_viewed_at=utcnow(),
                     view_count=1
                 )
                 session.add(view)
@@ -215,7 +217,7 @@ class AnalyticsTracker:
                 db_session = SessionDB(
                     user_id=user_id,
                     external_session_id=session_id,
-                    started_at=datetime.utcnow()
+                    started_at=utcnow()
                 )
                 session.add(db_session)
                 await session.commit()
@@ -253,7 +255,7 @@ class AnalyticsTracker:
                     logger.warning(f"Session not found: {session_id}")
                     return False
 
-                db_session.ended_at = datetime.utcnow()
+                db_session.ended_at = utcnow()
 
                 if duration_seconds is not None:
                     db_session.duration_seconds = duration_seconds
@@ -287,7 +289,7 @@ class AnalyticsTracker:
         """
         try:
             async with async_session_factory() as session:
-                now = datetime.utcnow()
+                now = utcnow()
                 db_session = SessionDB(
                     user_id=user_id,
                     started_at=now,
@@ -330,7 +332,7 @@ class AnalyticsTracker:
         """
         try:
             if date is None:
-                date = datetime.utcnow().date()
+                date = utcnow().date()
             else:
                 date = date.date() if hasattr(date, "date") else date
 

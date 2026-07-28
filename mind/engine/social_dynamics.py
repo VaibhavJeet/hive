@@ -15,6 +15,8 @@ import logging
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Set
 from uuid import UUID
@@ -142,9 +144,9 @@ class DynamicRelationship:
     def _process_event(self, event: RelationshipEvent, impact: float):
         """Update relationship metrics based on an event"""
         self.interaction_count += 1
-        self.last_interaction = datetime.utcnow()
+        self.last_interaction = utcnow()
         if not self.first_interaction:
-            self.first_interaction = datetime.utcnow()
+            self.first_interaction = utcnow()
 
         # Positive events
         if event in [RelationshipEvent.HAD_GOOD_CONVERSATION, RelationshipEvent.MADE_LAUGH]:
@@ -282,7 +284,7 @@ class DynamicRelationship:
 
         # Reduce if recently interacted
         if self.last_interaction:
-            hours_since = (datetime.utcnow() - self.last_interaction).total_seconds() / 3600
+            hours_since = (utcnow() - self.last_interaction).total_seconds() / 3600
             if hours_since < 1:
                 eagerness *= 0.3
 
@@ -434,7 +436,7 @@ class ConflictGenerator:
         topic = random.choice(ConflictGenerator.CONTROVERSIAL_TOPICS)
 
         conflict = Conflict(
-            conflict_id=f"conflict_{datetime.utcnow().timestamp()}",
+            conflict_id=f"conflict_{utcnow().timestamp()}",
             conflict_type=conflict_type,
             participants=[bot_a.id, bot_b.id],
             sides={"side_a": [bot_a.id], "side_b": [bot_b.id]},
@@ -517,7 +519,7 @@ class SocialPerceptionEngine:
             "community_id": community_id,
             "target_id": target_id,
             "target_name": target_name,
-            "timestamp": datetime.utcnow()
+            "timestamp": utcnow()
         }
         self.recent_events.append(event)
 
@@ -536,7 +538,7 @@ class SocialPerceptionEngine:
     ) -> List[Dict]:
         """Get recent events that a bot should perceive"""
         if since is None:
-            since = datetime.utcnow() - timedelta(hours=1)
+            since = utcnow() - timedelta(hours=1)
 
         relevant_events = []
         for event in reversed(self.recent_events):
@@ -725,7 +727,7 @@ class RelationshipManager:
     ) -> Conflict:
         """Start a new conflict"""
         conflict = Conflict(
-            conflict_id=f"conflict_{len(self.active_conflicts)}_{datetime.utcnow().timestamp()}",
+            conflict_id=f"conflict_{len(self.active_conflicts)}_{utcnow().timestamp()}",
             conflict_type=conflict_type,
             participants=participants,
             sides={"side_a": [participants[0]], "side_b": participants[1:]} if len(participants) > 1 else {},
@@ -740,7 +742,7 @@ class RelationshipManager:
                 rel = self.get_or_create_relationship(bot_a, bot_b)
                 rel.in_conflict = True
                 rel.conflict_topic = topic
-                rel.conflict_started = datetime.utcnow()
+                rel.conflict_started = utcnow()
                 rel.conflict_intensity = intensity
 
         logger.info(f"Conflict started: {conflict_type.value} about '{topic}' with {len(participants)} participants")
@@ -786,7 +788,7 @@ class RelationshipManager:
         self.drama_history.append(event)
 
         # Trim old drama
-        cutoff = datetime.utcnow() - timedelta(days=7)
+        cutoff = utcnow() - timedelta(days=7)
         self.drama_history = [d for d in self.drama_history if d.timestamp > cutoff]
 
         logger.info(f"Drama: {event.description}")
@@ -817,7 +819,7 @@ class RelationshipManager:
 
             # Relationships drift toward neutral without interaction
             if rel.last_interaction:
-                hours_since = (datetime.utcnow() - rel.last_interaction).total_seconds() / 3600
+                hours_since = (utcnow() - rel.last_interaction).total_seconds() / 3600
                 if hours_since > 48:  # 2 days without interaction
                     drift = 0.01 * (hours_since / 24)
                     rel.warmth = max(0.3, min(0.7, rel.warmth + (0.5 - rel.warmth) * drift))
@@ -826,7 +828,7 @@ class RelationshipManager:
         # Old conflicts resolve naturally
         for conflict in self.active_conflicts[:]:
             if conflict.started_at:
-                hours_active = (datetime.utcnow() - conflict.started_at).total_seconds() / 3600
+                hours_active = (utcnow() - conflict.started_at).total_seconds() / 3600
                 if hours_active > 72:  # 3 days
                     conflict.deescalate(0.1)
                     if conflict.resolved:

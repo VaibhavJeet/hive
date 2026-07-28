@@ -10,7 +10,7 @@ Provides:
 """
 
 import logging
-from typing import AsyncGenerator, Optional
+from typing import Annotated, AsyncGenerator, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -214,12 +214,18 @@ async def get_current_user(
 
 
 async def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    session: AsyncSession = Depends(get_db_session),
 ) -> Optional[AuthenticatedUser]:
     """
     Dependency to optionally get the current user.
 
     Works for routes that support both authenticated and unauthenticated access.
+
+    Uses the injected request-scoped session, like `get_current_user`. It previously
+    opened its own via `async_session_factory()`, which meant a second connection per
+    request outside the request's transaction, and made the dependency impossible to
+    override in tests (HIVE-010).
 
     Returns:
         AuthenticatedUser if valid token provided, None otherwise
@@ -233,27 +239,25 @@ async def get_optional_user(
     if token_data is None:
         return None
 
-    # Get user from database
-    async with async_session_factory() as session:
-        stmt = select(AppUserDB).where(AppUserDB.id == token_data.user_id)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+    stmt = select(AppUserDB).where(AppUserDB.id == token_data.user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
 
-        if user is None:
-            return None
+    if user is None:
+        return None
 
-        # Check if user is active
-        if hasattr(user, 'is_active') and not user.is_active:
-            return None
+    # Check if user is active
+    if hasattr(user, 'is_active') and not user.is_active:
+        return None
 
-        return AuthenticatedUser(
-            id=user.id,
-            email=user.email if hasattr(user, 'email') else "",
-            display_name=user.display_name,
-            avatar_seed=user.avatar_seed,
-            created_at=user.created_at,
-            is_active=getattr(user, 'is_active', True)
-        )
+    return AuthenticatedUser(
+        id=user.id,
+        email=user.email if hasattr(user, 'email') else "",
+        display_name=user.display_name,
+        avatar_seed=user.avatar_seed,
+        created_at=user.created_at,
+        is_active=getattr(user, 'is_active', True)
+    )
 
 
 async def get_user_id(
@@ -308,6 +312,29 @@ class RequestContext:
     ):
         self.session = session
         self.user = user
+
+
+# ============================================================================
+# ANNOTATED ALIASES
+# ============================================================================
+#
+# HIVE-003: the actor performing a request is derived from the bearer token and
+# never from a request parameter. Use these aliases in route signatures:
+#
+#     async def like_post(post_id: UUID, current_user: CurrentUser):
+#         ...  # current_user.id is the actor — a caller cannot claim to be someone else
+#
+# Explicit `user_id` / `author_id` parameters are legitimate only when they name a
+# *target* or a *filter* (e.g. "show me user X's profile"), never the caller.
+
+CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
+"""The authenticated caller. Rejects the request with 401 if there is no valid token."""
+
+OptionalUser = Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)]
+"""The authenticated caller, or None. For endpoints that serve anonymous traffic too."""
+
+DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+"""A request-scoped database session."""
 
 
 async def get_request_context(

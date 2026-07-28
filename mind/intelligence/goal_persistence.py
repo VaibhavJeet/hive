@@ -9,6 +9,8 @@ tracking, deadlines, and persistence across engine restarts.
 import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Any
 from uuid import UUID, uuid4
@@ -100,8 +102,8 @@ class Goal:
             deadline=datetime.fromisoformat(data["deadline"]) if data.get("deadline") else None,
             progress=data.get("progress", 0.0),
             status=GoalStatus(data.get("status", "active")),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
-            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else datetime.utcnow(),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else utcnow(),
+            updated_at=datetime.fromisoformat(data["updated_at"]) if data.get("updated_at") else utcnow(),
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             motivation=data.get("motivation", ""),
             milestones=data.get("milestones", []),
@@ -117,7 +119,7 @@ class Goal:
         """Check if goal is past deadline."""
         if not self.deadline:
             return False
-        return datetime.utcnow() > self.deadline and self.status == GoalStatus.ACTIVE
+        return utcnow() > self.deadline and self.status == GoalStatus.ACTIVE
 
     def advance_milestone(self):
         """Move to next milestone and update progress."""
@@ -127,11 +129,11 @@ class Goal:
         else:
             self.progress = min(1.0, self.progress + 0.1)
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
 
         if self.progress >= 1.0:
             self.status = GoalStatus.COMPLETED
-            self.completed_at = datetime.utcnow()
+            self.completed_at = utcnow()
 
     def add_blocker(self, blocker: str):
         """Add a blocker and potentially change status."""
@@ -139,7 +141,7 @@ class Goal:
         self.frustration_level = min(1.0, self.frustration_level + 0.1)
         if len(self.blockers) >= 3:
             self.status = GoalStatus.BLOCKED
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utcnow()
 
     def resolve_blocker(self, blocker: str):
         """Remove a blocker."""
@@ -148,7 +150,7 @@ class Goal:
             self.frustration_level = max(0.0, self.frustration_level - 0.15)
             if not self.blockers and self.status == GoalStatus.BLOCKED:
                 self.status = GoalStatus.ACTIVE
-            self.updated_at = datetime.utcnow()
+            self.updated_at = utcnow()
 
 
 class GoalPersistence:
@@ -189,7 +191,7 @@ class GoalPersistence:
                     mind_state.current_goals = [
                         {"__structured_goal__": True, **g} for g in goals_data
                     ]
-                    mind_state.updated_at = datetime.utcnow()
+                    mind_state.updated_at = utcnow()
                 else:
                     # Create new mind state
                     mind_state = BotMindStateDB(
@@ -278,7 +280,7 @@ class GoalPersistence:
         for goal in goals:
             if goal.id == goal_id:
                 goal.progress = max(0.0, min(1.0, progress))
-                goal.updated_at = datetime.utcnow()
+                goal.updated_at = utcnow()
 
                 if status:
                     goal.status = status
@@ -286,7 +288,7 @@ class GoalPersistence:
                 # Auto-complete if progress is 100%
                 if goal.progress >= 1.0 and goal.status == GoalStatus.ACTIVE:
                     goal.status = GoalStatus.COMPLETED
-                    goal.completed_at = datetime.utcnow()
+                    goal.completed_at = utcnow()
 
                 # Reduce frustration on progress
                 goal.frustration_level = max(0.0, goal.frustration_level - progress * 0.1)

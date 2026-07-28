@@ -14,6 +14,8 @@ This module adds:
 
 import random
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 from enum import Enum
@@ -55,7 +57,7 @@ class SmartBotBehaviors:
                 "recent_topics": [],
                 "questions_asked": [],
                 "mood_history": [],
-                "last_mood_change": datetime.utcnow(),
+                "last_mood_change": utcnow(),
             }
         return self.bot_states[bot_id]
 
@@ -69,7 +71,7 @@ class SmartBotBehaviors:
 
         # Don't generate events too frequently
         if state["last_life_event"]:
-            time_since = datetime.utcnow() - state["last_life_event"]
+            time_since = utcnow() - state["last_life_event"]
             if time_since < timedelta(minutes=10):
                 return None
 
@@ -97,7 +99,7 @@ class SmartBotBehaviors:
         event_templates = self._get_event_templates(event_type, interest, bot)
         event = self.rng.choice(event_templates)
 
-        state["last_life_event"] = datetime.utcnow()
+        state["last_life_event"] = utcnow()
 
         return {
             "type": event_type,
@@ -112,7 +114,7 @@ class SmartBotBehaviors:
         bot: BotProfile
     ) -> List[str]:
         """Get event templates for a given type."""
-        hour = datetime.utcnow().hour
+        hour = utcnow().hour
         time_context = "morning" if 5 <= hour < 12 else "afternoon" if 12 <= hour < 17 else "evening" if 17 <= hour < 21 else "night"
 
         templates = {
@@ -189,7 +191,7 @@ class SmartBotBehaviors:
 
     def get_current_activity(self, bot: BotProfile) -> str:
         """Get what the bot is currently doing."""
-        hour = datetime.utcnow().hour
+        hour = utcnow().hour
         interest = self.rng.choice(bot.interests) if bot.interests else "stuff"
 
         if 6 <= hour < 9:
@@ -383,7 +385,7 @@ class SmartBotBehaviors:
         current_mood = bot.emotional_state.mood
 
         # Time-based mood drift
-        hour = datetime.utcnow().hour
+        hour = utcnow().hour
         time_mood_influence = {
             MoodState.TIRED: 0.3 if hour < 7 or hour > 22 else 0.1,
             MoodState.EXCITED: 0.2 if 9 <= hour <= 17 else 0.1,
@@ -403,7 +405,7 @@ class SmartBotBehaviors:
             time_mood_influence[MoodState.ANXIOUS] = time_mood_influence.get(MoodState.ANXIOUS, 0) + 0.1
 
         # Calculate if mood should change
-        time_since_change = datetime.utcnow() - state["last_mood_change"]
+        time_since_change = utcnow() - state["last_mood_change"]
         change_probability = min(0.3, time_since_change.total_seconds() / 3600 * 0.1)  # Increase over time
 
         if self.rng.random() < change_probability:
@@ -412,11 +414,11 @@ class SmartBotBehaviors:
                 weights=list(time_mood_influence.values())
             )[0]
 
-            state["last_mood_change"] = datetime.utcnow()
+            state["last_mood_change"] = utcnow()
             state["mood_history"].append({
                 "from": current_mood.value,
                 "to": new_mood.value,
-                "time": datetime.utcnow().isoformat()
+                "time": utcnow().isoformat()
             })
 
             # Keep only last 10 mood changes
@@ -439,8 +441,8 @@ class SmartBotBehaviors:
         enhancements.append(f"You're currently: {activity}")
 
         # Time awareness
-        hour = datetime.utcnow().hour
-        day = datetime.utcnow().strftime("%A")
+        hour = utcnow().hour
+        day = utcnow().strftime("%A")
         enhancements.append(f"It's {day}, {hour}:00")
 
         # Life event if any

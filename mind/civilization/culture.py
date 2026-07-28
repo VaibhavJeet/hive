@@ -16,6 +16,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Any, Tuple
 from uuid import UUID
 
@@ -270,7 +272,7 @@ Respond with ONLY the JSON, no other text.""",
                 # Check if it should become canonical
                 if artifact.times_referenced >= 10 and not artifact.is_canonical:
                     artifact.is_canonical = True
-                    artifact.canonized_at = datetime.utcnow()
+                    artifact.canonized_at = utcnow()
                     logger.info(f"[CULTURE] Artifact '{artifact.title}' became canonical!")
 
                 await session.commit()
@@ -453,7 +455,7 @@ Respond with ONLY the JSON, no other text.""",
                 return "The Founding"
 
             # Check transition conditions
-            era_age = (datetime.utcnow() - current_era.started_at).days
+            era_age = (utcnow() - current_era.started_at).days
 
             # Get dominant movements
             movement_stmt = (
@@ -473,7 +475,7 @@ Respond with ONLY the JSON, no other text.""",
                 if top_movement.influence_score > 0.5:
                     # New era!
                     current_era.is_current = False
-                    current_era.ended_at = datetime.utcnow()
+                    current_era.ended_at = utcnow()
 
                     new_era = CivilizationEraDB(
                         name=f"The Age of {top_movement.name}",
