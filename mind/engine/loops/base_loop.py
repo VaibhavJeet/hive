@@ -142,14 +142,66 @@ Use DIFFERENT topics, DIFFERENT phrasing, DIFFERENT emotions."""
     # EVENT BROADCASTING
     # ========================================================================
 
+    #: Loop event names that also correspond to a hook. Everything a loop broadcasts
+    #: to the portal is something that happened in the civilization, so this is the
+    #: natural single place to fire hooks from — rather than scattering emit() calls
+    #: next to each of the ~15 existing _broadcast_event sites and inevitably missing
+    #: some.
+    _HOOK_FOR_EVENT = {
+        "new_post": "POST_CREATED",
+        "new_comment": "COMMENT_CREATED",
+        "post_liked": "REACTION_ADDED",
+        "new_chat_message": "MESSAGE_SENT",
+        "new_dm": "MESSAGE_SENT",
+        "bot_thought": "BOT_THOUGHT",
+        "bot_evolved": "SKILL_LEARNED",
+        "bot_self_improved": "SKILL_LEARNED",
+    }
+
     async def _broadcast_event(self, event_type: str, data: dict):
-        """Broadcast an event to connected clients."""
+        """Broadcast an event to connected clients, and fire any matching hook.
+
+        The WebSocket broadcast is the *observation* path — it tells a human watching
+        the portal what happened. Hooks are the *participation* path: they let the
+        system react to itself. Both are driven from here so they cannot drift apart.
+        """
         if self.event_broadcast:
             await self.event_broadcast.put({
                 "type": event_type,
                 "data": data,
                 "timestamp": utcnow().isoformat()
             })
+
+        await self._fire_hook(event_type, data)
+
+    async def _fire_hook(self, event_type: str, data: dict) -> None:
+        """Fire the hook matching a loop event, if there is one.
+
+        Never raises and never blocks the loop: a misbehaving extension must not be
+        able to stop bots from living. HookManager.emit already swallows per-hook
+        errors; this guards against the dispatch itself failing.
+        """
+        hook_name = self._HOOK_FOR_EVENT.get(event_type)
+        if not hook_name:
+            return
+
+        try:
+            from mind.capabilities.hooks import HookEvent, get_hook_manager
+
+            bot_id = data.get("bot_id") or data.get("author_id")
+            if isinstance(bot_id, str):
+                try:
+                    bot_id = UUID(bot_id)
+                except (ValueError, AttributeError):
+                    bot_id = None
+
+            await get_hook_manager().emit(
+                getattr(HookEvent, hook_name),
+                data=data,
+                bot_id=bot_id if isinstance(bot_id, UUID) else None,
+            )
+        except Exception as exc:
+            logger.debug("Hook dispatch for %s failed: %s", event_type, exc)
 
     # ========================================================================
     # BOT MANAGEMENT HELPERS

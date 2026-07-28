@@ -95,6 +95,7 @@ EXPECTED_OPEN = {
     "stories": 0,
     "system": 0,
     "search": 0,
+    "voice": 0,              # hearing a bot speak reaches an external service
     # Intentionally open.
     "auth": 4,               # register / login / refresh / logout
     "health": 6,             # liveness / readiness / component probes

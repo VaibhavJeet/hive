@@ -373,7 +373,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
 
     TTS_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description="Enable text-to-speech for bot responses"
     )
     TTS_PROVIDER: str = Field(

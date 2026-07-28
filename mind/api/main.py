@@ -56,7 +56,7 @@ from mind.api.routes import (
     media_router, analytics_router, analytics_admin_router,
     analytics_dashboard_router, stories_router, search_router,
     admin_router, blocking_router, scaling_router, civilization_router,
-    settings_router, system_router
+    settings_router, system_router, voice_router
 )
 from mind.api.routes.admin import require_admin
 from mind.api.routes.evolution import router as evolution_router
@@ -236,6 +236,15 @@ async def lifespan(app: FastAPI):
     # Auto-bootstrap: civilization + communities if not already set up
     await _auto_bootstrap(app)
 
+    # Wire the hook system before the engine starts, so no event fires into a void.
+    from mind.capabilities.hooks import HookEvent, get_hook_manager
+    from mind.engine.reactions import register_builtin_reactions
+
+    app.state.hooks = get_hook_manager()
+    reaction_count = register_builtin_reactions()
+    await app.state.hooks.emit(HookEvent.SYSTEM_STARTUP)
+    print(f"Hook system active - {reaction_count} reactions registered")
+
     # Initialize event queue for real-time updates
     app.state.event_queue = asyncio.Queue()
 
@@ -258,6 +267,16 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Shutting down...")
+
+    # Let anything listening know we are going down, before we start tearing things
+    # out from under it.
+    if hasattr(app.state, "hooks"):
+        try:
+            from mind.capabilities.hooks import HookEvent
+
+            await app.state.hooks.emit(HookEvent.SYSTEM_SHUTDOWN)
+        except Exception as exc:
+            logger.warning("Shutdown hook dispatch failed: %s", exc)
 
     # Stop analytics background tasks
     from mind.analytics import stop_analytics_background_tasks
@@ -411,6 +430,7 @@ app.include_router(admin_router)
 app.include_router(civilization_router)
 app.include_router(settings_router)
 app.include_router(system_router)
+app.include_router(voice_router)
 
 
 # ============================================================================

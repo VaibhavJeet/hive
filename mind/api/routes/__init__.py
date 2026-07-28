@@ -20,6 +20,7 @@ from mind.api.routes.scaling import router as scaling_router
 from mind.api.routes.civilization import router as civilization_router
 from mind.api.routes.settings import router as settings_router
 from mind.api.routes.system import router as system_router
+from mind.api.routes.voice import router as voice_router
 
 __all__ = [
     "feed_router", "chat_router", "users_router",

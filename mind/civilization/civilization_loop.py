@@ -69,8 +69,17 @@ class CivilizationLoop:
         self._last_reproduction_check = utcnow()
         self._last_ritual_check = utcnow()
 
+    #: Civilization events that also fire a hook. These are the species-scale
+    #: moments — the ones a bot should be able to react to as news about its world.
+    _HOOK_FOR_EVENT = {
+        "world_map_birth": "BOT_BORN",
+        "world_map_death": "BOT_DIED",
+        "world_map_era_transition": "ERA_CHANGED",
+        "world_map_migration": "RELATIONSHIP_FORMED",
+    }
+
     async def _broadcast(self, event_type: str, data: dict):
-        """Broadcast a civilization event to WebSocket clients."""
+        """Broadcast a civilization event to WebSocket clients, and fire its hook."""
         if self.event_broadcast:
             try:
                 await self.event_broadcast.put({
@@ -78,8 +87,20 @@ class CivilizationLoop:
                     "data": data,
                     "timestamp": utcnow().isoformat()
                 })
-            except Exception:
-                pass  # Best-effort broadcast
+            except Exception as exc:
+                # Best-effort: a full queue must not stop a birth or death happening.
+                logger.warning("Could not broadcast %s: %s", event_type, exc)
+
+        hook_name = self._HOOK_FOR_EVENT.get(event_type)
+        if hook_name:
+            try:
+                from mind.capabilities.hooks import HookEvent, get_hook_manager
+
+                await get_hook_manager().emit(
+                    getattr(HookEvent, hook_name), data=data
+                )
+            except Exception as exc:
+                logger.debug("Hook dispatch for %s failed: %s", event_type, exc)
 
     async def start(self):
         """Start the civilization loop."""

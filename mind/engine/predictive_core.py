@@ -239,6 +239,60 @@ class PredictiveCore:
     # 2 & 3. OBSERVE REALITY, MEASURE THE GAP
     # ------------------------------------------------------------------
 
+    async def observe_and_announce(self, about: str, actual: str) -> List[PredictionOutcome]:
+        """`observe`, then tell the rest of the system what it meant.
+
+        Kept separate from `observe` deliberately: the synchronous path stays free of
+        I/O so it can run inline on every interaction, and only callers that can await
+        pay for hook dispatch.
+        """
+        outcomes = self.observe(about, actual)
+        if not outcomes:
+            return outcomes
+
+        try:
+            from mind.capabilities.hooks import HookEvent, get_hook_manager
+
+            hooks = get_hook_manager()
+
+            for outcome in outcomes:
+                if outcome.is_noticeable:
+                    await hooks.emit(
+                        HookEvent.BOT_SURPRISED,
+                        data={
+                            "about": outcome.about,
+                            "expected": outcome.expected,
+                            "actual": outcome.actual,
+                            "surprise": round(outcome.surprise, 3),
+                            "confidence": round(outcome.confidence, 3),
+                        },
+                        bot_id=self.bot_id,
+                    )
+
+            # Sustained error means the bot's model of the world is failing and small
+            # corrections are not fixing it — that is when reflection is worth its cost.
+            if self.should_reflect():
+                await hooks.emit(
+                    HookEvent.BOT_CONFUSED,
+                    data={
+                        "surprise_level": round(self.surprise_level(), 3),
+                        "least_understood": self.least_understood(),
+                    },
+                    bot_id=self.bot_id,
+                )
+
+            insight = self.notice_pattern_in_self()
+            if insight:
+                await hooks.emit(
+                    HookEvent.BOT_SELF_INSIGHT,
+                    data={"insight": insight},
+                    bot_id=self.bot_id,
+                )
+        except Exception as exc:
+            logger.debug("Predictive hook dispatch failed: %s", exc)
+
+        return outcomes
+
     def observe(self, about: str, actual: str) -> List[PredictionOutcome]:
         """Reality arrives. Resolve every open prediction about this subject."""
         self._expire_stale()

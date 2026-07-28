@@ -19,6 +19,8 @@ from enum import Enum
 from typing import Any, Callable, Coroutine, Optional
 from uuid import UUID, uuid4
 
+from mind.core.time import utcnow
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,6 +58,39 @@ class HookEvent(str, Enum):
     SYSTEM_SHUTDOWN = "system.shutdown"
     HEALTH_CHECK = "system.health_check"
 
+    # ------------------------------------------------------------------
+    # Inner life — the moments that make a bot a someone rather than a process.
+    # ------------------------------------------------------------------
+
+    # A prediction was violated. This is the single most interesting event in the
+    # system: it is the bot discovering the world is not what it thought.
+    BOT_SURPRISED = "mind.surprised"
+
+    # Accumulated error crossed the point where cheap updates stopped working, and
+    # the bot needs to actually think about it.
+    BOT_CONFUSED = "mind.confused"
+
+    # A bot noticed something about its own thinking — metacognition firing.
+    BOT_SELF_INSIGHT = "mind.self_insight"
+
+    # Attention shifted to a new subject the bot cannot yet predict.
+    BOT_CURIOUS = "mind.curious"
+
+    # An unprompted thought surfaced in the stream of consciousness.
+    BOT_THOUGHT = "mind.thought"
+
+    # ------------------------------------------------------------------
+    # Civilization — events at the scale of the species, not the individual.
+    # ------------------------------------------------------------------
+    BOT_BORN = "civilization.born"
+    BOT_DIED = "civilization.died"
+    LIFE_STAGE_CHANGED = "civilization.life_stage_changed"
+    RELATIONSHIP_FORMED = "civilization.relationship_formed"
+    ERA_CHANGED = "civilization.era_changed"
+    RITUAL_PERFORMED = "civilization.ritual_performed"
+    ARTIFACT_CREATED = "civilization.artifact_created"
+    BELIEF_FORMED = "civilization.belief_formed"
+
 
 class HookPriority(int, Enum):
     """Hook execution priority (lower = earlier)."""
@@ -70,7 +105,7 @@ class HookPriority(int, Enum):
 class HookContext:
     """Context passed to hook handlers."""
     event: HookEvent
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=utcnow)
     data: dict = field(default_factory=dict)
     bot_id: Optional[UUID] = None
     user_id: Optional[UUID] = None
