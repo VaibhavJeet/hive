@@ -19,6 +19,7 @@ from mind.core.database import (
 from mind.engine.bot_learning import get_learning_manager
 from mind.engine.bot_self_coding import get_self_coder_manager
 # GitHub integration disabled for now
+# from mind.engine.bot_github import get_github_manager
 from mind.config.settings import settings
 
 from mind.api.routes.admin import require_admin

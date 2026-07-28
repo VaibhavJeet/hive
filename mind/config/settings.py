@@ -283,6 +283,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
 
     # -------------------------------------------------------------------------
+    # GITHUB
+    # -------------------------------------------------------------------------
+
+    # -------------------------------------------------------------------------
     # SELF-CODING (bots writing and executing their own code)
     # -------------------------------------------------------------------------
 
@@ -296,6 +300,15 @@ class Settings(BaseSettings):
             "enable — but it still turns an API parameter into code execution, so it "
             "stays opt-in and admin-only."
         ),
+    )
+
+    GITHUB_TOKEN: Optional[str] = Field(
+        default=None,
+        description="GitHub Personal Access Token for bot development capabilities"
+    )
+    GITHUB_BOT_REPO_PREFIX: str = Field(
+        default="bot-evolution",
+        description="Prefix for repositories created by bots"
     )
 
     # -------------------------------------------------------------------------
@@ -386,6 +399,31 @@ class Settings(BaseSettings):
     WEB_SEARCH_API_KEY: Optional[str] = Field(
         default=None,
         description="API key for paid search providers (Tavily, Serper, etc.)"
+    )
+
+    # -------------------------------------------------------------------------
+    # EXTERNAL CHANNELS (Telegram, Discord) - disabled by default
+    # -------------------------------------------------------------------------
+
+    TELEGRAM_BOT_TOKEN: Optional[str] = Field(
+        default=None,
+        description="Telegram Bot API token for external messaging"
+    )
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = Field(
+        default=None,
+        description="Secret token for Telegram webhook verification"
+    )
+    DISCORD_BOT_TOKEN: Optional[str] = Field(
+        default=None,
+        description="Discord bot token for full bot features"
+    )
+    DISCORD_WEBHOOK_URL: Optional[str] = Field(
+        default=None,
+        description="Discord webhook URL for simple outgoing messages"
+    )
+    EXTERNAL_CHANNELS_ENABLED: bool = Field(
+        default=True,
+        description="Enable external channel integrations (Telegram, Discord) - requires tokens to be set"
     )
 
     # -------------------------------------------------------------------------
