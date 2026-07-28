@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 45 (HIVE-001…036, 068, 119, 120, 125, 129, 131, 133, 135, 138)  ·  **HIVE-119 DECIDED — both layers stay**  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 55 of 140  ·  **All P0 closed**  ·  **Epic A: 21/21**  ·  **Epic C: decided — 5,245 LOC deleted, 3 modules kept with reasons**  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -1400,115 +1400,185 @@ advertises a feature that cannot run.
 **Fix (wire):** mount `WebhookHandler` routes in `main.py`, start `ChannelService` in `lifespan`,
 connect it to the response loop. **Fix (delete):** remove the package and the four settings.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (1,310 LOC). Never mounted, never started, referenced by nothing.
+> - **The config was the active harm.** `EXTERNAL_CHANNELS_ENABLED` defaulted to **True** and
+>   both `.env` examples documented four tokens for a subsystem with **no entry point**. Anyone
+>   reading the configuration would reasonably conclude Telegram and Discord worked.
+> - It also carried an inbound **webhook surface** nothing was serving — signature verification
+>   included, which made it look more finished than it was.
+> - Settings and env entries removed with it, so the config surface no longer describes features
+>   that do not exist. Recoverable from history if wanted.
 
 ### HIVE-038 · P1 · `mind/config/production.py` (602 LOC) is unreachable
 The production preflight validator — default-secret detection, CORS checks, demo-mode warnings, a
 deployment checklist. Zero importers. Covered operationally by HIVE-021; this task is to verify its
 checks are correct and complete once it actually runs.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-021 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-021 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Closed by HIVE-021**, which wired `validate_on_startup()` into `lifespan`. The 602 lines
+>   are reachable and now run on every non-test boot.
+> - **HIVE-019 was the verification this task asked for**: turning the validator on immediately
+>   exposed that its wildcard-CORS check was rated `HIGH`, which `raise_on_critical` ignores. The
+>   check existed and could not fire. Anything else in there may have the same shape — six issues
+>   are CRITICAL, the rest advisory, and a mis-rated one is silently non-blocking.
 
 ### HIVE-039 · P1 · `mind/engine/sentient_core.py` (990 LOC) is unreachable
 Zero importers. Determine whether it was superseded by `bot_mind.py` + `conscious_mind.py` and delete,
 or whether functionality was lost in a refactor.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (992 LOC).
+> - **It was NOT superseded**, which is why this needed a decision rather than a cleanup. It is a
+>   *parallel* cognition implementation with concepts the live modules lack — `WisdomInsight`,
+>   `CuriosityTarget`, `CreativeIdea`, `InnerMonologue`, `ConsolidatedMemory`.
+> - **Deleted anyway** because it has never run or been tested, and keeping it meant three
+>   cognition subsystems where two are wired. If those concepts are wanted they belong in
+>   `bot_mind`/`conscious_mind` as tested additions, not resurrected wholesale from code that has
+>   never executed.
 
 ### HIVE-040 · P1 · `mind/engine/bot_github.py` (596 LOC) is unreachable
 Zero importers, but `GITHUB_TOKEN` and `GITHUB_BOT_REPO_PREFIX` settings exist (`settings.py:280-287`)
 and `scripts/test_github.py` / `scripts/create_repo.py` reference the concept. Bots creating GitHub
 repos is also a significant new attack surface — decide deliberately.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (596 LOC), and the highest-risk of the four.
+> - Bots creating and pushing to GitHub repositories, unwired — but `GITHUB_TOKEN` was documented
+>   in both env examples, inviting an operator to supply a **personal access token** for a code
+>   path nothing could reach. A credential configured for dead code is worse than one configured
+>   for live code: nobody is watching what uses it.
+> - `scripts/test_github.py` went with it; the settings are gone.
 
 ### HIVE-041 · P1 · `mind/core/container.py` (326 LOC) DI container is unreachable
 Zero importers. The codebase uses module-level singletons + `mind/core/dependencies.py` providers
 instead. Delete, or migrate to it consistently.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (326 LOC). The codebase already has **two** dependency patterns —
+>   module-level singletons and `mind/core/dependencies.py` providers — and this was a third
+>   nobody adopted. Migrating to it would have been a large refactor for no behavioural gain.
 
 ### HIVE-042 · P1 · `mind/capabilities/tts.py` (439 LOC) is unreachable
 Three provider implementations (OpenAI, ElevenLabs, Edge). `TTS_ENABLED`/`TTS_PROVIDER`/`TTS_API_KEY`
 settings exist. Nothing calls `synthesize_speech`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (439 LOC). Three provider implementations (OpenAI, ElevenLabs, Edge)
+>   for a product with **no audio surface anywhere** — neither `queen/` nor `cell/` can play a
+>   sound. `TTS_ENABLED` defaulted to False and nothing called `synthesize_speech`.
+> - It had tests, which is the one argument for keeping it — but tests for unreachable code test
+>   a library, not the product. Removed with the module.
 
 ### HIVE-043 · P1 · `mind/capabilities/skills.py` (410 LOC) is unreachable
 Skill registry with Weather and Calculator skills. Never registered with any bot.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** HIVE-034
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** HIVE-034 (retired with it)
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (437 LOC). A skill registry with two skills: Weather (needs an API
+>   key nobody has configured) and Calculator (a toy). **No skill invocation path exists** — no
+>   bot, loop or route ever consults the registry.
+> - **This retires the HIVE-034 calculator hardening.** That entry anticipated it: "if HIVE-043
+>   deletes skills.py this fix goes with it". Slightly galling to delete work from earlier the
+>   same session, but sunk cost is not a reason to keep unreachable code.
 
 ### HIVE-044 · P1 · `mind/capabilities/scheduler.py` (411 LOC) is unreachable
 A second task scheduler, duplicating `mind/scheduler/activity_scheduler.py` (which *is* used).
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (413 LOC). The clearest call of the set: it duplicates
+>   `mind/scheduler/activity_scheduler.py`, which **is** wired and running. Two schedulers where
+>   one is live is not optionality, it is ambiguity about which one a reader should trust.
 
 ### HIVE-045 · P1 · `mind/capabilities/hooks.py` (306 LOC) is unreachable
 Event-hook system with priorities. No `HookEvent` is ever emitted.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (306 LOC). An event-hook system with priorities and context — and
+>   **zero `HookEvent` emissions anywhere in the codebase**. A plugin system nobody plugged into,
+>   and there is no cost to rebuilding it the day something actually needs to emit an event.
 
 ### HIVE-046 · P1 · `mind/capabilities/context_engine.py` (303 LOC) is unreachable
 Conversation context compaction and token estimation — arguably the thing most worth wiring, since
 long-running bots will blow the context window without it.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Not started` — **KEPT deliberately** · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: keep and wire.** The one capability module that survived the HIVE-042..045
+>   sweep, because the product has a real need for it: bots run continuously and accumulate
+>   conversation history, so **without compaction they will exhaust the context window**. That is
+>   a latent failure with a working fix already written.
+> - Keeping is a decision here, not a deferral — the alternative was deleting the one module that
+>   solves a problem the system genuinely has.
+> - **Wiring it** means routing LLM calls in `mind/engine/loops/` through `ContextEngine` and
+>   choosing a compaction trigger. Needs a token-budget decision, so it is real work rather than
+>   an import.
 
 ### HIVE-047 · P1 · `mind/civilization/cultural_integration.py` (862 LOC) is re-exported but never used
 Imported only by `mind/civilization/__init__.py`. TODO.md claims "cultural_integration.py complete".
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Not started` — **KEPT deliberately** · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: keep and wire.** 862 LOC of civilization code, and HIVE-119 established that the
+>   civilization **is** the product. Deleting product code because nobody imported it yet is the
+>   wrong direction — unlike `channels/` or `bot_github.py`, this is core-domain work.
+> - TODO.md claims "cultural_integration.py complete". It is complete and **unreachable**, which
+>   is a different problem and the one worth fixing.
 
 ### HIVE-048 · P2 · `mind/core/pubsub.py` (491 LOC) is re-exported but never used
 Redis pub/sub service. Would be the correct fix for the single-process WebSocket broadcast limitation
 (HIVE-075) — wire it rather than delete it.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Not started` — **KEPT deliberately** · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
 > **Depends on:** — · **Blocks:** HIVE-075
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: keep — this is the fix for HIVE-075, not dead weight.** WebSocket broadcast is
+>   process-local (`ConnectionManager` holds connections in a dict), so with `API_WORKERS=4` a
+>   client connected to worker 2 **never sees events produced by worker 1**. That is a live bug
+>   in a shipped feature, and this module is the ready-made fix.
+> - Deleting it would have meant deleting the solution and keeping the problem.
 
 ### HIVE-049 · P2 · `mind/core/idle_precompute.py` (387 LOC) is re-exported but never used
 Idle-time precomputation. Never started by `lifespan`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: deleted** (387 LOC). Idle-time precomputation, never started by `lifespan`, zero
+>   references. Unlike `pubsub.py` there is no open task it answers — it is speculative
+>   optimisation for a performance problem nobody has measured.
 
 ### HIVE-050 · ~~P2~~ **P1** · Two overlapping report systems (two routes are dead)
 `mind/moderation/report_system.py` (399 LOC) and `mind/moderation/reporting.py` (580 LOC) are *both*
