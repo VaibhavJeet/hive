@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 133 tasks — 26 P0, 47 P1, 50 P2, 10 P3.  ·  **Done:** 9 (HIVE-001, 002, 003, 004, 068, 125, 129, 131, 133)
+**Counts:** 134 tasks — 26 P0, 47 P1, 51 P2, 10 P3.  ·  **Done:** 10 (HIVE-001, 002, 003, 004, 005, 068, 125, 129, 131, 133)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -318,11 +318,66 @@ deliberately public.
 
 ### HIVE-005 · P0 · Add auth to the `chat` router (5 endpoints)
 `mind/api/routes/chat.py` — 0 auth dependencies. Community chat and DM send/read fully open.
+**AC:** every chat endpoint requires authentication, and a signed-in user can only read DM threads
+they are a party to.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** —
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - **Done, AC verified.** Chat is **4 required / 1 optional / 0 open**. Authentication came from
+>   HIVE-003; the real work here was the authorization hole underneath it.
+> - 🚨 **Found a private-message IDOR — the most severe defect of the session so far.**
+>   `GET /chat/dm/{conversation_id}` filtered on the conversation id **alone**. That would be
+>   survivable if ids were opaque, but `send_direct_message:588` builds them as
+>   `f"{min(id_a, id_b)}_{max(id_a, id_b)}"` — derivable from two UUIDs — **and bot UUIDs are public**
+>   via `GET /communities/{id}/bots`. So any signed-in user could enumerate and read **every private
+>   conversation between any user and any bot**, by construction, with no guessing.
+>   Fixed: participation is required, the message SELECT additionally filters on sender/receiver, and
+>   it returns **404 not 403** so the status code cannot be used to probe which threads exist.
+> - **This is the lesson of the task, and it generalises.** HIVE-003 made this endpoint *authenticated*
+>   and the coverage table went green — chat showed `0 open` — while it remained trivially
+>   exploitable. **Authentication coverage is not an authorization audit.** Every remaining router in
+>   HIVE-006…016 needs the same second pass: for each endpoint that takes a resource id, ask *who is
+>   allowed to name that id*. `tests/api/test_auth_coverage.py` cannot see this class of bug.
+> - **The test was verified against the unpatched code**, not just written to pass: removing the
+>   participation check fails 2 of the 4 cases. A regression test that has never seen the bug fail is
+>   a guess.
+> - **Two adjacent issues found, not fixed here** (both deserve their own tasks):
+>   1. **Users cannot block other users — only bots.** `blocking_service.block_bot` is the only
+>      block path, so `send_direct_message`'s block check is meaningless between humans. On a
+>      platform with human-to-human DMs that is a harassment gap, and it makes HIVE-008's "blocking"
+>      surface narrower than its name suggests. **Depends on HIVE-119**: irrelevant if the platform
+>      is observation-only.
+>   2. **`GET /chat/community/{id}/messages` is deliberately anonymous-readable** (OptionalUser).
+>      Fine while every community is public — there is no privacy flag on `CommunityDB`. If private
+>      communities are ever added, this endpoint leaks them on day one.
+> - **Note on the dead block check.** `send_direct_message` still carries
+>   `if is_bot: <check receiver blocked sender>`. Since HIVE-003 removed the caller-supplied
+>   `is_bot`, that branch is now unreachable. Left in place rather than deleted because it documents
+>   an intended rule; delete it when issue (1) above is resolved.
+
+### HIVE-134 · P2 · Users can only block bots, not other users
+`mind/blocking/blocking_service.py` exposes `block_bot` and nothing else; `UserBlockDB` is keyed
+bot-side. Every blocking endpoint in `mind/api/routes/blocking.py` is therefore user→bot only.
+
+Consequences: `send_direct_message`'s block check cannot fire between two humans, and the "blocking"
+feature named in HIVE-008 covers a narrower surface than it appears to. On a platform that ships
+human-to-human DMs, no way to block another human is a harassment gap.
+
+**Depends on the HIVE-119 answer** — irrelevant if the product is observation-only, required if it is
+a social platform.
+**Fix:** generalise `UserBlockDB` to (blocker_id, blocked_id, blocked_is_bot), add user-blocking
+endpoints, and enforce it in the DM and comment paths.
+**AC:** a blocked user cannot DM or comment at their blocker; the check runs for human senders.
 
 > **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+> **Depends on:** HIVE-119 · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-005. Also note `send_direct_message` still carries a now-dead
+>   `if is_bot:` block check (HIVE-003 removed the caller-supplied flag). Delete it as part of this
+>   task, not before — it documents the intended rule.
 
 ### HIVE-006 · P0 · Add auth to the `moderation` router (14 endpoints)
 `mind/api/routes/moderation.py` — 0 auth dependencies. Report review, resolution, dismissal, and
