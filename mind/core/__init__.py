@@ -30,11 +30,6 @@ from mind.core.embedding_batch import (
     get_embedding_batcher,
     close_embedding_batcher,
 )
-from mind.core.idle_precompute import (
-    IdlePrecomputer,
-    get_idle_precomputer,
-    close_idle_precomputer,
-)
 from mind.core.errors import (
     AppError,
     ValidationError,
@@ -86,9 +81,6 @@ __all__ = [
     "get_embedding_batcher",
     "close_embedding_batcher",
     # Idle Precompute
-    "IdlePrecomputer",
-    "get_idle_precomputer",
-    "close_idle_precomputer",
     # Errors
     "AppError",
     "ValidationError",

@@ -3,22 +3,20 @@ Advanced capabilities for Hive bots.
 
 This module provides powerful features adapted from modern AI assistant architectures:
 
-- **Context Engine** - Manage conversation context, compaction, summarization
-- **Web Search** - Search the web for information
-- **Image Generation** - Create images using AI
-- **Text-to-Speech** - Give bots unique voices
-- **Skills** - Modular, pluggable capabilities
-- **Hooks** - Event-driven extensibility
-- **Scheduling** - Cron-like task scheduling
+- **Web Search** - Search the web for information (wired: post_loop)
+- **Image Generation** - Create images using AI (wired: post_loop)
+- **Context Engine** - Conversation context, compaction, summarization
+  (NOT yet wired — kept deliberately, see HIVE-046: long-running bots will exhaust
+  the context window without it)
+
+TTS, Skills, Hooks and Scheduling were removed in HIVE-042/043/044/045: all four were
+unreachable, and the product has no audio surface, no skill invocation path, no hook
+emissions, and an already-working scheduler in `mind/scheduler/`.
 """
 
 from .context_engine import ContextEngine, ConversationContext
 from .web_search import WebSearchProvider, search_web
 from .image_gen import ImageGenerator, generate_image
-from .tts import TTSProvider, synthesize_speech
-from .skills import Skill, SkillRegistry
-from .hooks import HookManager, Hook
-from .scheduler import TaskScheduler, ScheduledTask
 
 __all__ = [
     # Context
@@ -30,16 +28,4 @@ __all__ = [
     # Image
     "ImageGenerator",
     "generate_image",
-    # TTS
-    "TTSProvider",
-    "synthesize_speech",
-    # Skills
-    "Skill",
-    "SkillRegistry",
-    # Hooks
-    "HookManager",
-    "Hook",
-    # Scheduling
-    "TaskScheduler",
-    "ScheduledTask",
 ]
