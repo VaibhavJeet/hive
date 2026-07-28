@@ -21,9 +21,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-!cell/lib/
-lib64/
+# Anchored to the repo root: these are Python build artifacts, not any directory named
+# "lib". An unanchored `lib/` also swallowed queen/src/lib/ and cell/lib/ — see HIVE-125.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
