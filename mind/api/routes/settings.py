@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from mind.core.database import async_session_factory, get_session
+from mind.api.routes.admin import require_admin
+from mind.core.database import async_session_factory, AppUserDB, get_session
 
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -97,6 +98,14 @@ class UpdateSettingsRequest(BaseModel):
 # to the database. This approach allows the settings to work without requiring
 # a database migration immediately.
 
+# ⚠️ HIVE-136: this is a module-level dict, not storage.
+#   - it resets to defaults on every restart
+#   - with API_WORKERS=4 each worker holds its own copy, so a PUT lands on one
+#     worker and a subsequent GET may read another
+#   - nothing outside this file reads it: no engine, loop, or middleware consumes
+#     any of these values, so changing them has no effect on the platform
+# The endpoints below are correctly gated (HIVE-007); the feature underneath is not
+# implemented. See HIVE-136.
 _settings_store: Dict[str, Any] = {
     "general": GeneralSettings().model_dump(),
     "bot": BotSettings().model_dump(),
@@ -156,7 +165,7 @@ def reset_settings() -> AllSettings:
 # ============================================================================
 
 @router.get("", response_model=AllSettings)
-async def get_settings():
+async def get_settings(admin: AppUserDB = Depends(require_admin)):
     """
     Get all platform settings.
 
@@ -171,7 +180,10 @@ async def get_settings():
 
 
 @router.put("", response_model=AllSettings)
-async def update_all_settings(request: UpdateSettingsRequest):
+async def update_all_settings(
+    request: UpdateSettingsRequest,
+    admin: AppUserDB = Depends(require_admin),
+):
     """
     Update platform settings.
 
@@ -182,7 +194,7 @@ async def update_all_settings(request: UpdateSettingsRequest):
 
 
 @router.post("/reset", response_model=AllSettings)
-async def reset_all_settings():
+async def reset_all_settings(admin: AppUserDB = Depends(require_admin)):
     """
     Reset all settings to their default values.
     """
@@ -190,13 +202,16 @@ async def reset_all_settings():
 
 
 @router.get("/general", response_model=GeneralSettings)
-async def get_general_settings():
+async def get_general_settings(admin: AppUserDB = Depends(require_admin)):
     """Get general platform settings."""
     return GeneralSettings(**_settings_store["general"])
 
 
 @router.put("/general", response_model=GeneralSettings)
-async def update_general_settings(settings: GeneralSettings):
+async def update_general_settings(
+    settings: GeneralSettings,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Update general platform settings."""
     _settings_store["general"] = settings.model_dump()
     _settings_store["updated_at"] = datetime.utcnow().isoformat()
@@ -204,13 +219,16 @@ async def update_general_settings(settings: GeneralSettings):
 
 
 @router.get("/bot", response_model=BotSettings)
-async def get_bot_settings():
+async def get_bot_settings(admin: AppUserDB = Depends(require_admin)):
     """Get bot configuration settings."""
     return BotSettings(**_settings_store["bot"])
 
 
 @router.put("/bot", response_model=BotSettings)
-async def update_bot_settings(settings: BotSettings):
+async def update_bot_settings(
+    settings: BotSettings,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Update bot configuration settings."""
     _settings_store["bot"] = settings.model_dump()
     _settings_store["updated_at"] = datetime.utcnow().isoformat()
@@ -218,13 +236,16 @@ async def update_bot_settings(settings: BotSettings):
 
 
 @router.get("/auth", response_model=AuthSettings)
-async def get_auth_settings():
+async def get_auth_settings(admin: AppUserDB = Depends(require_admin)):
     """Get authentication settings."""
     return AuthSettings(**_settings_store["auth"])
 
 
 @router.put("/auth", response_model=AuthSettings)
-async def update_auth_settings(settings: AuthSettings):
+async def update_auth_settings(
+    settings: AuthSettings,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Update authentication settings."""
     _settings_store["auth"] = settings.model_dump()
     _settings_store["updated_at"] = datetime.utcnow().isoformat()
@@ -232,13 +253,16 @@ async def update_auth_settings(settings: AuthSettings):
 
 
 @router.get("/moderation", response_model=ModerationSettings)
-async def get_moderation_settings():
+async def get_moderation_settings(admin: AppUserDB = Depends(require_admin)):
     """Get content moderation settings."""
     return ModerationSettings(**_settings_store["moderation"])
 
 
 @router.put("/moderation", response_model=ModerationSettings)
-async def update_moderation_settings(settings: ModerationSettings):
+async def update_moderation_settings(
+    settings: ModerationSettings,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Update content moderation settings."""
     _settings_store["moderation"] = settings.model_dump()
     _settings_store["updated_at"] = datetime.utcnow().isoformat()
@@ -246,13 +270,16 @@ async def update_moderation_settings(settings: ModerationSettings):
 
 
 @router.get("/notifications", response_model=NotificationSettings)
-async def get_notification_settings():
+async def get_notification_settings(admin: AppUserDB = Depends(require_admin)):
     """Get notification settings."""
     return NotificationSettings(**_settings_store["notifications"])
 
 
 @router.put("/notifications", response_model=NotificationSettings)
-async def update_notification_settings(settings: NotificationSettings):
+async def update_notification_settings(
+    settings: NotificationSettings,
+    admin: AppUserDB = Depends(require_admin),
+):
     """Update notification settings."""
     _settings_store["notifications"] = settings.model_dump()
     _settings_store["updated_at"] = datetime.utcnow().isoformat()
