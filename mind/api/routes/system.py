@@ -386,8 +386,10 @@ async def _check_services() -> List[ServiceStatus]:
             engine_metrics = [
                 {"label": "Status", "value": "running"},
             ]
-    except Exception:
-        pass
+    except Exception as exc:
+        # The engine being unreachable IS the status worth reporting, so this is
+        # logged rather than swallowed — it used to render as a blank panel.
+        logger.warning("Could not read activity engine status: %s", exc)
 
     services.append(ServiceStatus(name="Activity Engine", status=engine_status, metrics=engine_metrics))
 

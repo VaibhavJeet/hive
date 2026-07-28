@@ -320,8 +320,13 @@ class CivilizationLoop:
                                                 "avatar_seed": bp.avatar_seed,
                                                 "interests": bp.interests or [],
                                             })
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    # The birth is real either way; only the display
+                                    # fields are missing, so the event still goes out.
+                                    logger.warning(
+                                        "Could not enrich birth event for %s: %s",
+                                        child_id, exc
+                                    )
                                 await self._broadcast("world_map_birth", birth_data)
 
     async def _check_elder_legacies(self):

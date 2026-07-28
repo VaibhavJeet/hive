@@ -811,8 +811,13 @@ class AuthenticityEngine:
                 if get_relationship_closeness and author_id:
                     try:
                         relationship_closeness = await get_relationship_closeness(bot_id, author_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        # Falls back to 0.0 (strangers), which silently changes who the
+                        # bot engages with — worth seeing in the logs.
+                        logger.debug(
+                            "Closeness lookup failed for %s -> %s: %s",
+                            bot_id, author_id, exc
+                        )
 
                 # Create engagement context
                 context = EngagementContext(

@@ -504,8 +504,12 @@ class MediaProcessor:
             if output_path and os.path.exists(output_path):
                 try:
                     os.remove(output_path)
-                except Exception:
-                    pass
+                except OSError as cleanup_error:
+                    # Narrowed from bare Exception: only filesystem errors are expected
+                    # here, and a failed cleanup leaves a stray file worth knowing about.
+                    logger.warning(
+                        "Could not remove partial output %s: %s", output_path, cleanup_error
+                    )
             raise VideoProcessingError(f"Failed to compress video: {str(e)}")
         finally:
             if clip is not None:

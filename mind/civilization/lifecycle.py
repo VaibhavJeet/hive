@@ -159,43 +159,66 @@ class LifecycleManager:
 
         stats = {"aged": 0, "stage_changed": 0, "died": 0}
 
-        async with async_session_factory() as session:
-            # Get all living bots
-            stmt = select(BotLifecycleDB).where(BotLifecycleDB.is_alive == True)
-            result = await session.execute(stmt)
-            lifecycles = result.scalars().all()
+        # HIVE-027: batch rather than loading every living bot at once. The original
+        # selected the whole population, then did per-bot async work (including an LLM
+        # call on death) inside a single transaction — a long-held write lock and a
+        # memory spike that both grow with the civilization. Committing per batch also
+        # means a failure part-way through keeps the aging already done.
+        # Keyset pagination, not OFFSET: a bot that dies during this run flips
+        # is_alive to False and drops out of the filtered set, which would shift every
+        # subsequent OFFSET and silently skip that many living bots. Walking by
+        # last-seen id is immune to rows leaving the set.
+        batch_size = 200
+        last_seen = None
 
-            for lifecycle in lifecycles:
-                # Update age
-                old_stage = lifecycle.life_stage
-                lifecycle.virtual_age_days += virtual_days
-                lifecycle.last_aged = datetime.utcnow()
+        while True:
+            async with async_session_factory() as session:
+                stmt = (
+                    select(BotLifecycleDB)
+                    .where(BotLifecycleDB.is_alive == True)
+                    .order_by(BotLifecycleDB.bot_id)
+                    .limit(batch_size)
+                )
+                if last_seen is not None:
+                    stmt = stmt.where(BotLifecycleDB.bot_id > last_seen)
+                result = await session.execute(stmt)
+                lifecycles = result.scalars().all()
 
-                # Update life stage using config
-                new_stage = config.get_life_stage(lifecycle.virtual_age_days)
-                if new_stage != old_stage:
-                    lifecycle.life_stage = new_stage
-                    lifecycle.life_events.append({
-                        "event": f"entered_{new_stage}_stage",
-                        "date": datetime.utcnow().isoformat(),
-                        "impact": "milestone",
-                        "details": f"Transitioned to {new_stage} after {lifecycle.virtual_age_days:.1f} days"
-                    })
-                    stats["stage_changed"] += 1
-                    logger.info(f"[LIFECYCLE] Bot {lifecycle.bot_id} entered {new_stage} stage")
+                if not lifecycles:
+                    break
 
-                # Apply vitality decay using config
-                decay_rate = config.get_vitality_decay(new_stage)
-                lifecycle.vitality = max(0.0, lifecycle.vitality - (decay_rate * virtual_days))
+                for lifecycle in lifecycles:
+                    # Update age
+                    old_stage = lifecycle.life_stage
+                    lifecycle.virtual_age_days += virtual_days
+                    lifecycle.last_aged = datetime.utcnow()
 
-                # Check for natural death
-                if await self._should_die_naturally(lifecycle):
-                    await self._handle_death(lifecycle, "old_age", session)
-                    stats["died"] += 1
-                else:
-                    stats["aged"] += 1
+                    # Update life stage using config
+                    new_stage = config.get_life_stage(lifecycle.virtual_age_days)
+                    if new_stage != old_stage:
+                        lifecycle.life_stage = new_stage
+                        lifecycle.life_events.append({
+                            "event": f"entered_{new_stage}_stage",
+                            "date": datetime.utcnow().isoformat(),
+                            "impact": "milestone",
+                            "details": f"Transitioned to {new_stage} after {lifecycle.virtual_age_days:.1f} days"
+                        })
+                        stats["stage_changed"] += 1
+                        logger.info(f"[LIFECYCLE] Bot {lifecycle.bot_id} entered {new_stage} stage")
 
-            await session.commit()
+                    # Apply vitality decay using config
+                    decay_rate = config.get_vitality_decay(new_stage)
+                    lifecycle.vitality = max(0.0, lifecycle.vitality - (decay_rate * virtual_days))
+
+                    # Check for natural death
+                    if await self._should_die_naturally(lifecycle):
+                        await self._handle_death(lifecycle, "old_age", session)
+                        stats["died"] += 1
+                    else:
+                        stats["aged"] += 1
+
+                last_seen = lifecycles[-1].bot_id
+                await session.commit()
 
         return stats
 

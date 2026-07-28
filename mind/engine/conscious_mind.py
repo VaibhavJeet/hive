@@ -1376,8 +1376,9 @@ Generate your next thought authentically. This is not a response to anyone - thi
                         },
                         "timestamp": datetime.utcnow().isoformat()
                     })
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Broadcast is best-effort; the reaction itself is already recorded.
+                    logger.debug("Could not broadcast bot reaction: %s", exc)
 
             # Maybe form a desire to interact
             if want_to_respond and self.autonomous_behaviors:

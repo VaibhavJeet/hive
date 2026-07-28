@@ -1289,8 +1289,9 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
             },
             "timestamp": datetime.utcnow().isoformat()
         })
-    except Exception:
-        pass
+    except Exception as exc:
+        # Best-effort: a failed status push must not stop the admin socket connecting.
+        logger.warning("Could not send initial engine stats to admin %s: %s", admin_id, exc)
 
     try:
         while True:
