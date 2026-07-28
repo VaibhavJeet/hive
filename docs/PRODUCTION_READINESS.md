@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 134 tasks — 26 P0, 47 P1, 51 P2, 10 P3.  ·  **Done:** 10 (HIVE-001, 002, 003, 004, 005, 068, 125, 129, 131, 133)
+**Counts:** 135 tasks — 26 P0, 48 P1, 51 P2, 10 P3.  ·  **Done:** 12 (HIVE-001…006, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -357,36 +357,84 @@ they are a party to.
 >   `is_bot`, that branch is now unreachable. Left in place rather than deleted because it documents
 >   an intended rule; delete it when issue (1) above is resolved.
 
-### HIVE-134 · P2 · Users can only block bots, not other users
-`mind/blocking/blocking_service.py` exposes `block_bot` and nothing else; `UserBlockDB` is keyed
-bot-side. Every blocking endpoint in `mind/api/routes/blocking.py` is therefore user→bot only.
-
-Consequences: `send_direct_message`'s block check cannot fire between two humans, and the "blocking"
-feature named in HIVE-008 covers a narrower surface than it appears to. On a platform that ships
-human-to-human DMs, no way to block another human is a harassment gap.
-
-**Depends on the HIVE-119 answer** — irrelevant if the product is observation-only, required if it is
-a social platform.
-**Fix:** generalise `UserBlockDB` to (blocker_id, blocked_id, blocked_is_bot), add user-blocking
-endpoints, and enforce it in the DM and comment paths.
-**AC:** a blocked user cannot DM or comment at their blocker; the check runs for human senders.
-
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
-> **Blockers:** _none recorded_
-> **Feedback:**
-> - _28-07-2026_ — Found during HIVE-005. Also note `send_direct_message` still carries a now-dead
->   `if is_bot:` block check (HIVE-003 removed the caller-supplied flag). Delete it as part of this
->   task, not before — it documents the intended rule.
-
 ### HIVE-006 · P0 · Add auth to the `moderation` router (14 endpoints)
 `mind/api/routes/moderation.py` — 0 auth dependencies. Report review, resolution, dismissal, and
 moderation actions are open to anonymous callers. Requires a moderator role check, not just login.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** HIVE-050, HIVE-094
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-050, HIVE-094
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Moderation is **14 required / 0 open**. HIVE-003 closed the 6 write
+>   endpoints; this closed the 8 reads.
+> - **The reads were the bigger leak.** The whole moderation queue was anonymously readable —
+>   `GET /reports`, `/reports/{id}`, `/reports/stats`, `/reports/counts`,
+>   `/reports/content/{target_id}`. That exposes **who reported whom, for what reason, and the
+>   reported content**. Reporter identity leaking is a retaliation risk, not just a privacy one.
+> - **`POST /moderation/check` was a free classifier oracle.** Anonymous callers could run arbitrary
+>   text through the content filter, unlimited — useful for probing exactly what phrasing evades
+>   moderation, and cheap to abuse as a DoS. Now requires a session (not admin: legitimate clients
+>   may want to pre-check their own drafts).
+> - **Applied the HIVE-005 lesson and it paid immediately.** Rather than stop at "0 open", I did the
+>   authorization second pass — which meant checking *route reachability*, and that surfaced
+>   **[HIVE-135](#hive-135--p1--four-routes-were-unreachable-including-the-liveness-probe)**: four
+>   dead endpoints and three duplicate registrations across the app, including a liveness-probe
+>   misconfiguration that could restart containers in production. Both are closed.
+> - ⚠️ **The two duplicate `GET /moderation/reports*` registrations are left in place** and
+>   allowlisted in `tests/api/test_route_table.py`. They are the concrete manifestation of
+>   **HIVE-050** — `report_system.py` and `reporting.py` both register the same paths, so the second
+>   implementation is unreachable. Choosing which survives is a design decision, not a reordering,
+>   and silently picking one would be the wrong call for me to make. **HIVE-050 is now blocking real
+>   behaviour, not just tidiness — consider re-rating it from P2.**
+> - **Note for HIVE-094** (moderation is stubs): the API surface is now correctly gated, but what it
+>   gates is still largely placeholder — image moderation always allows, AI text moderation is a
+>   no-op. A locked door in front of an empty room.
+
+### HIVE-135 · P1 · Four routes were unreachable, including the liveness probe
+FastAPI matches in registration order, so a literal path registered **after** a same-shape
+parameterised path never wins — the parameterised route takes the request and fails on type
+coercion, usually as a 422 that reads like a client error. Found by a route-table scan written
+while applying the HIVE-005 authorization lesson to HIVE-006:
+
+| Dead route | Swallowed by |
+|---|---|
+| `DELETE /notifications/subscribe` | `/notifications/{notification_id}` |
+| `GET /moderation/reports/counts` | `/moderation/reports/{report_id}` |
+| `GET /admin/bots/retired` | `/admin/bots/{bot_id}` (**across two routers** — `scaling_router` and `admin_router` share the `/admin` prefix) |
+| `GET /health` | `metrics_router`'s component check |
+
+**Push unsubscribe has never worked.** Neither has retired-bot listing.
+
+The `/health` case is the operationally dangerous one. `metrics_router` registered its component
+check at `/health` and, being included before the app-level route, shadowed the cheap liveness probe
+in `main.py`. **A liveness probe pointed at `/health` therefore queried Postgres and the LLM on every
+poll, and returned 503 whenever either was down** — turning a dependency blip into a container
+restart loop, exactly when the system is least able to absorb one.
+**Fix:** reorder the three shadowed routes; move the component check to `/health/components`; harden
+`/health/detailed`, which returned **500** on missing `app.state` rather than reporting the component
+unavailable.
+**AC:** no route is shadowed; `GET /health` is a cheap 200 with no component fan-out; no health
+endpoint can return 500.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-077 (push), HIVE-100 (health), HIVE-109 (deployment)
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - **Done, AC verified.** `tests/api/test_route_table.py` — shadowing scanner, duplicate-registration
+>   guard, and liveness assertions. Scanner reports **zero shadowed routes**.
+> - **This is the second instance of the same class** (HIVE-133 was the first, found by accident).
+>   Four more existed. The guard test now makes the next one fail loudly instead of silently
+>   producing a 422 — including the **cross-router** case, which is the one a per-file review would
+>   never catch.
+> - ⚠️ **Check your deployment manifests before deploying.** If anything points a liveness probe at
+>   `/health`, it was getting the readiness semantics. Feeds directly into **HIVE-109** (no container
+>   image or deployment manifest exists yet) — get the probe paths right when writing them:
+>   `/health` = liveness, `/health/components` = readiness.
+> - **Three duplicate registrations remain**, two of them allowlisted against HIVE-050 (the competing
+>   report systems). The third — `GET /health` — is now resolved.
+> - **Root cause is structural, not careless.** Route order is implicit in `main.py`'s 21
+>   `include_router` calls plus per-file decorator order. Nothing surfaces it, and it is invisible in
+>   review. The scanner is the durable fix; consider running it in CI (HIVE-063).
 
 ### HIVE-007 · P0 · Add auth + admin gate to the `settings` router (13 endpoints)
 `mind/api/routes/settings.py` — 0 auth dependencies, including `update_auth_settings` (:227),
@@ -851,7 +899,7 @@ Idle-time precomputation. Never started by `lifespan`.
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
 
-### HIVE-050 · P2 · Two overlapping report systems
+### HIVE-050 · ~~P2~~ **P1** · Two overlapping report systems (two routes are dead)
 `mind/moderation/report_system.py` (399 LOC) and `mind/moderation/reporting.py` (580 LOC) are *both*
 imported by `mind/api/routes/moderation.py:20,25`. Determine the overlap, pick one, migrate, delete the
 other.
@@ -1461,6 +1509,28 @@ comprehensive list"*. The moderation *API* is complete; the enforcement behind i
 > **Depends on:** HIVE-006 · **Blocks:** —
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
+
+### HIVE-134 · P2 · Users can only block bots, not other users
+`mind/blocking/blocking_service.py` exposes `block_bot` and nothing else; `UserBlockDB` is keyed
+bot-side. Every blocking endpoint in `mind/api/routes/blocking.py` is therefore user→bot only.
+
+Consequences: `send_direct_message`'s block check cannot fire between two humans, and the "blocking"
+feature named in HIVE-008 covers a narrower surface than it appears to. On a platform that ships
+human-to-human DMs, no way to block another human is a harassment gap.
+
+**Depends on the HIVE-119 answer** — irrelevant if the product is observation-only, required if it is
+a social platform.
+**Fix:** generalise `UserBlockDB` to (blocker_id, blocked_id, blocked_is_bot), add user-blocking
+endpoints, and enforce it in the DM and comment paths.
+**AC:** a blocked user cannot DM or comment at their blocker; the check runs for human senders.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-119 · **Blocks:** —
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-005. Also note `send_direct_message` still carries a now-dead
+>   `if is_bot:` block check (HIVE-003 removed the caller-supplied flag). Delete it as part of this
+>   task, not before — it documents the intended rule.
 
 ### HIVE-095 · P1 · Follower system is unimplemented
 `mind/api/routes/users.py:187` — `follower_count=0  # TODO: Implement followers`. No follow table, no
