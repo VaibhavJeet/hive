@@ -293,12 +293,12 @@ civilization systems (lifecycle, culture, relationships, rituals, and eras).
 
 ## Authentication in Swagger
 
-1. **JWT Bearer** — Click **Authorize**, open **JWT Bearer**, paste your `access_token`
-   (no need to type `Bearer `; Swagger adds it). Get a token from **POST /auth/register**
-   or **POST /auth/login** (`access_token` in the JSON body).
-2. **Admin X-User-ID** — For `/admin/*` and admin-only analytics routes, use the second
-   authorize entry and set the **X-User-ID** header value to an app user UUID with
-   `is_admin=true`.
+**JWT Bearer** — Click **Authorize**, open **JWT Bearer**, paste your `access_token`
+(no need to type `Bearer `; Swagger adds it). Get a token from **POST /auth/register**
+or **POST /auth/login** (`access_token` in the JSON body).
+
+The same scheme covers admin routes: `/admin/*` and admin-only analytics routes additionally
+require the token's user to have `is_admin=true`, and return **403** otherwise.
 
 Operations that require auth show a **lock** icon and list the required scheme(s).
 Public endpoints (e.g. civilization observation, health) have no lock.
@@ -330,8 +330,8 @@ Public endpoints (e.g. civilization observation, health) have no lock.
         {
             "name": "admin",
             "description": (
-                "Administrative routes. Requires **Admin X-User-ID** header (app user UUID "
-                "with admin rights), unless noted otherwise."
+                "Administrative routes. Requires a **JWT Bearer** access token whose user has "
+                "`is_admin=true`, unless noted otherwise."
             ),
         },
         {"name": "scaling", "description": "Scaling and capacity management controls"},

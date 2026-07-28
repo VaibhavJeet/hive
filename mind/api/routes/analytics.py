@@ -34,7 +34,7 @@ from mind.core.database import (
 )
 from mind.api.dependencies import get_current_user, get_optional_user
 from mind.core.auth import AuthenticatedUser
-from mind.api.routes.admin import require_admin as require_admin_header
+from mind.api.routes.admin import require_admin
 from mind.analytics import (
     AnalyticsTracker,
     AnalyticsAggregator,
@@ -573,7 +573,7 @@ async def verify_admin(user: AuthenticatedUser) -> AuthenticatedUser:
 
 @admin_router.get("/platform", response_model=PlatformMetricsResponse)
 async def get_platform_metrics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=90, description="Analysis period in days")
 ):
     """
@@ -618,7 +618,7 @@ async def get_platform_metrics(
 
 @admin_router.get("/bots", response_model=List[BotPerformanceResponse])
 async def get_all_bot_analytics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=30, description="Analysis period in days"),
     limit: int = Query(default=20, ge=1, le=100, description="Maximum bots to return")
 ):
@@ -652,7 +652,7 @@ async def get_all_bot_analytics(
 
 @admin_router.get("/trends", response_model=List[TrendingContentResponse])
 async def get_trending_content(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     hours: int = Query(default=24, ge=1, le=168, description="Timeframe in hours"),
     limit: int = Query(default=20, ge=1, le=50, description="Maximum items to return")
 ):
@@ -688,7 +688,7 @@ async def get_trending_content(
 
 @admin_router.get("/engagement-by-hour", response_model=TimeSeriesDataResponse)
 async def get_engagement_by_hour(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=7, ge=1, le=30, description="Analysis period in days")
 ):
     """
@@ -713,7 +713,7 @@ async def get_engagement_by_hour(
 
 @admin_router.get("/daily", response_model=List[DailyMetricsResponse])
 async def get_daily_metrics(
-    admin_user: AppUserDB = Depends(require_admin_header),
+    admin_user: AppUserDB = Depends(require_admin),
     days: int = Query(default=30, ge=1, le=90, description="Number of days to retrieve")
 ):
     """
