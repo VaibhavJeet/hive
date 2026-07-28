@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from mind.api.dependencies import CurrentUser
 from mind.core.database import async_session_factory, AppUserDB, BotProfileDB, CommunityDB, PostDB, PostCommentDB
 from sqlalchemy import func
 from mind.core.errors import NotFoundError, DatabaseError
@@ -253,8 +254,17 @@ async def get_user(user_id: UUID):
 
 @router.put("/{user_id}")
 @handle_errors(default_error=DatabaseError)
-async def update_user(user_id: UUID, display_name: str):
-    """Update user profile."""
+async def update_user(user_id: UUID, display_name: str, current_user: CurrentUser):
+    """Update user profile.
+
+    HIVE-003: `user_id` is a path target, so it must be checked against the caller —
+    previously anyone could rename any account.
+    """
+    if user_id != current_user.id:
+        raise HTTPException(
+            status_code=403, detail="You can only update your own profile"
+        )
+
     async with async_session_factory() as session:
         stmt = select(AppUserDB).where(AppUserDB.id == user_id)
         result = await session.execute(stmt)

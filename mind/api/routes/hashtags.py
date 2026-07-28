@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from mind.api.dependencies import CurrentUser, OptionalUser
 from mind.hashtags.hashtag_service import (
     get_hashtag_service,
     TrendingHashtag,
@@ -100,22 +101,20 @@ async def get_trending_hashtags(
 # ============================================================================
 
 @router.get("/{tag}", response_model=HashtagInfoResponse)
-async def get_hashtag_info(
-    tag: str,
-    user_id: Optional[UUID] = Query(default=None, description="User ID to check if following")
-):
+async def get_hashtag_info(tag: str, current_user: OptionalUser):
     """
     Get information about a specific hashtag.
 
-    Returns the hashtag, post count, and whether the user is following it.
+    Public. `is_following` reflects the signed-in caller, and is False when anonymous —
+    it is never a lookup of some other user's follow state.
     """
     service = get_hashtag_service()
 
     post_count = await service.get_hashtag_post_count(tag)
 
     is_following = False
-    if user_id:
-        is_following = await service.is_following_hashtag(user_id, tag)
+    if current_user:
+        is_following = await service.is_following_hashtag(current_user.id, tag)
 
     return HashtagInfoResponse(
         tag=tag.lower().strip('#'),
@@ -164,14 +163,14 @@ async def get_hashtag_posts(
 # ============================================================================
 
 @router.post("/{tag}/follow")
-async def follow_hashtag(tag: str, user_id: UUID):
+async def follow_hashtag(tag: str, current_user: CurrentUser):
     """
     Follow a hashtag to receive notifications for new posts.
 
-    Users will be notified when new posts are created with this hashtag.
+    Follows on behalf of the signed-in caller only.
     """
     service = get_hashtag_service()
-    followed = await service.follow_hashtag(user_id, tag)
+    followed = await service.follow_hashtag(current_user.id, tag)
 
     if followed:
         return {"status": "followed", "tag": tag.lower().strip('#')}
@@ -180,14 +179,14 @@ async def follow_hashtag(tag: str, user_id: UUID):
 
 
 @router.delete("/{tag}/follow")
-async def unfollow_hashtag(tag: str, user_id: UUID):
+async def unfollow_hashtag(tag: str, current_user: CurrentUser):
     """
     Unfollow a hashtag.
 
-    User will no longer receive notifications for this hashtag.
+    Unfollows on behalf of the signed-in caller only.
     """
     service = get_hashtag_service()
-    unfollowed = await service.unfollow_hashtag(user_id, tag)
+    unfollowed = await service.unfollow_hashtag(current_user.id, tag)
 
     if unfollowed:
         return {"status": "unfollowed", "tag": tag.lower().strip('#')}
@@ -196,14 +195,14 @@ async def unfollow_hashtag(tag: str, user_id: UUID):
 
 
 @router.get("/following/list", response_model=List[FollowedHashtagResponse])
-async def get_followed_hashtags(user_id: UUID):
+async def get_followed_hashtags(current_user: CurrentUser):
     """
-    Get all hashtags a user is following.
+    Get all hashtags the signed-in user is following.
 
     Returns hashtags with follow date and post count.
     """
     service = get_hashtag_service()
-    hashtags = await service.get_followed_hashtags(user_id)
+    hashtags = await service.get_followed_hashtags(current_user.id)
 
     return [
         FollowedHashtagResponse(

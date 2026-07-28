@@ -10,7 +10,7 @@ Provides:
 """
 
 import logging
-from typing import AsyncGenerator, Optional
+from typing import Annotated, AsyncGenerator, Optional
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -308,6 +308,29 @@ class RequestContext:
     ):
         self.session = session
         self.user = user
+
+
+# ============================================================================
+# ANNOTATED ALIASES
+# ============================================================================
+#
+# HIVE-003: the actor performing a request is derived from the bearer token and
+# never from a request parameter. Use these aliases in route signatures:
+#
+#     async def like_post(post_id: UUID, current_user: CurrentUser):
+#         ...  # current_user.id is the actor — a caller cannot claim to be someone else
+#
+# Explicit `user_id` / `author_id` parameters are legitimate only when they name a
+# *target* or a *filter* (e.g. "show me user X's profile"), never the caller.
+
+CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
+"""The authenticated caller. Rejects the request with 401 if there is no valid token."""
+
+OptionalUser = Annotated[Optional[AuthenticatedUser], Depends(get_optional_user)]
+"""The authenticated caller, or None. For endpoints that serve anonymous traffic too."""
+
+DbSession = Annotated[AsyncSession, Depends(get_db_session)]
+"""A request-scoped database session."""
 
 
 async def get_request_context(

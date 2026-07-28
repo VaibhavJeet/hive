@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from mind.api.dependencies import CurrentUser
 from mind.core.database import async_session_factory, MediaDB
 from mind.media.storage import (
     get_media_storage,
@@ -68,12 +69,14 @@ class MediaDeleteResponse(BaseModel):
 
 @router.post("/upload", response_model=MediaUploadResponse)
 async def upload_media(
+    current_user: CurrentUser,
     file: UploadFile = File(...),
-    uploader_id: UUID = Query(..., description="ID of the user or bot uploading"),
-    is_bot: bool = Query(False, description="Whether uploader is a bot"),
 ):
     """
     Upload a media file (image or video).
+
+    The uploader is the signed-in caller. `is_bot` was removed with the caller-supplied
+    `uploader_id` (HIVE-003) — bots write media through the engine, not this endpoint.
 
     Supports:
     - Images: JPEG, PNG, GIF, WebP (max 10MB by default)
@@ -99,7 +102,7 @@ async def upload_media(
             content=content,
             original_filename=file.filename or "unnamed",
             content_type=content_type,
-            uploader_id=uploader_id,
+            uploader_id=current_user.id,
         )
     except FileTooLargeError as e:
         raise HTTPException(status_code=413, detail=str(e))
@@ -149,8 +152,8 @@ async def upload_media(
     async with async_session_factory() as session:
         media = MediaDB(
             id=upload_result["media_id"],
-            uploader_id=uploader_id,
-            uploader_is_bot=is_bot,
+            uploader_id=current_user.id,
+            uploader_is_bot=False,
             file_type=upload_result["file_type"],
             content_type=content_type,
             original_filename=upload_result["original_filename"],
@@ -207,14 +210,12 @@ async def get_media(media_id: UUID):
 
 
 @router.delete("/{media_id}", response_model=MediaDeleteResponse)
-async def delete_media(
-    media_id: UUID,
-    requester_id: UUID = Query(..., description="ID of the user requesting deletion"),
-):
+async def delete_media(media_id: UUID, current_user: CurrentUser):
     """
     Delete a media file.
 
-    Only the uploader can delete their own media (soft delete).
+    Only the uploader can delete their own media (soft delete). Ownership is checked
+    against the bearer token, not a caller-supplied id.
     """
     async with async_session_factory() as session:
         stmt = select(MediaDB).where(
@@ -228,7 +229,7 @@ async def delete_media(
             raise HTTPException(status_code=404, detail="Media not found")
 
         # Check ownership (only uploader can delete)
-        if media.uploader_id != requester_id:
+        if media.uploader_id != current_user.id:
             raise HTTPException(
                 status_code=403,
                 detail="You can only delete your own media"

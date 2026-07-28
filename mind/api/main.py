@@ -376,6 +376,9 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(feed_router)
 app.include_router(chat_router)
+# blocking_router must precede users_router: its literal `/users/blocked` would
+# otherwise be shadowed by `/users/{user_id}` and 422 on UUID parsing (HIVE-133).
+app.include_router(blocking_router)
 app.include_router(users_router)
 app.include_router(evolution_router)
 app.include_router(metrics_router)
@@ -389,7 +392,6 @@ app.include_router(media_router)
 app.include_router(stories_router)
 app.include_router(search_router)
 app.include_router(admin_router)
-app.include_router(blocking_router)
 app.include_router(scaling_router)
 app.include_router(civilization_router)
 app.include_router(settings_router)

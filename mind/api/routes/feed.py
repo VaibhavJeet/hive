@@ -13,6 +13,7 @@ import html
 from sqlalchemy import select, func, desc
 from sqlalchemy.exc import IntegrityError
 
+from mind.api.dependencies import CurrentUser, OptionalUser
 from mind.core.database import (
     async_session_factory, PostDB, PostLikeDB, PostCommentDB,
     BotProfileDB, CommunityDB, UserBlockDB, MediaDB
@@ -176,20 +177,22 @@ class ErrorResponse(BaseModel):
     response_model=List[PostResponse],
     summary="List feed posts",
     description=(
-        "Paginated posts, newest first. Optional **user_id** filters likes and blocks; "
-        "**community_id** limits to one community."
+        "Paginated posts, newest first. Like state and block filtering apply to the "
+        "signed-in caller; **community_id** limits to one community."
     ),
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_feed(
-    user_id: Optional[UUID] = None,
+    current_user: OptionalUser,
     community_id: Optional[UUID] = None,
     limit: int = Query(default=20, le=50),
     offset: int = Query(default=0, ge=0)
 ):
     """Get feed posts with pagination. Optionally filter by community."""
-    # Get blocked bot IDs for this user
+    user_id = current_user.id if current_user else None
+
+    # Block filtering applies to the signed-in caller, not an arbitrary user id.
     blocked_bot_ids = set()
     if user_id:
         blocked_bot_ids = await blocking_service.get_blocked_bot_ids(user_id)
@@ -310,16 +313,17 @@ async def get_feed(
     "/posts/{post_id}",
     response_model=PostResponse,
     summary="Get one post",
-    description="Full post with all comments. **user_id** enables per-user like state and blocking.",
+    description="Full post with all comments. Like state and blocking apply to the signed-in caller.",
     responses={
         404: {"model": ErrorResponse, "description": "Post not found"},
         422: {"model": ErrorResponse, "description": "Validation error"},
     },
 )
 @handle_errors(default_error=DatabaseError)
-async def get_post(post_id: UUID, user_id: Optional[UUID] = None):
+async def get_post(post_id: UUID, current_user: OptionalUser):
     """Get a single post with all comments."""
-    # Get blocked bot IDs for this user
+    user_id = current_user.id if current_user else None
+
     blocked_bot_ids = set()
     if user_id:
         blocked_bot_ids = await blocking_service.get_blocked_bot_ids(user_id)
@@ -429,21 +433,27 @@ async def get_post(post_id: UUID, user_id: Optional[UUID] = None):
     "/posts/{post_id}/like",
     response_model=PostLikeActionResponse,
     summary="Like a post",
-    description="**user_id** is the liker (human user or bot id). Idempotent if already liked.",
+    description="The liker is the signed-in caller. Idempotent if already liked.",
     responses={
         404: {"model": ErrorResponse, "description": "Post not found"},
         422: {"model": ErrorResponse, "description": "Validation error"},
     },
 )
 @handle_errors(default_error=DatabaseError)
-async def like_post(post_id: UUID, user_id: UUID, is_bot: bool = False):
+async def like_post(post_id: UUID, current_user: CurrentUser):
     """
     Like a post.
+
+    HIVE-003: the liker is the bearer-token user — previously any caller could
+    like on anyone's behalf, or pass `is_bot=true` to write a bot-attributed like.
 
     Uses database-level locking to prevent race conditions:
     - SELECT FOR UPDATE on post row
     - Handles unique constraint violations gracefully
     """
+    user_id = current_user.id
+    is_bot = False
+
     async with async_session_factory() as session:
         try:
             # Lock the post row first to prevent race conditions
@@ -498,12 +508,14 @@ async def like_post(post_id: UUID, user_id: UUID, is_bot: bool = False):
     "/posts/{post_id}/like",
     response_model=PostLikeActionResponse,
     summary="Unlike a post",
-    description="Removes **user_id**'s like from the post.",
+    description="Removes the signed-in caller's like from the post.",
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
-async def unlike_post(post_id: UUID, user_id: UUID):
+async def unlike_post(post_id: UUID, current_user: CurrentUser):
     """Unlike a post."""
+    user_id = current_user.id
+
     async with async_session_factory() as session:
         stmt = select(PostLikeDB).where(
             PostLikeDB.post_id == post_id,
@@ -532,7 +544,7 @@ async def unlike_post(post_id: UUID, user_id: UUID):
     "/posts/{post_id}/comments",
     response_model=CommentResponse,
     summary="Create a comment",
-    description="Adds a comment; **user_id** is the author. Content may be moderated for humans.",
+    description="Adds a comment authored by the signed-in caller. Content is moderated.",
     responses={
         400: {"model": ErrorResponse, "description": "Blocked by moderation"},
         422: {"model": ErrorResponse, "description": "Validation error"},
@@ -541,12 +553,18 @@ async def unlike_post(post_id: UUID, user_id: UUID):
 @handle_errors(default_error=DatabaseError)
 async def create_comment(
     post_id: UUID,
-    user_id: UUID,
     content: str,
+    current_user: CurrentUser,
     parent_comment_id: Optional[UUID] = None,
-    is_bot: bool = False
 ):
-    """Create a comment on a post."""
+    """Create a comment on a post.
+
+    HIVE-003: the author is the bearer-token user. The old `is_bot` flag let a caller
+    self-declare as a bot and skip moderation entirely.
+    """
+    user_id = current_user.id
+    is_bot = False
+
     # Content moderation check (skip for bot-generated content)
     if not is_bot:
         content_filter = get_content_filter()
@@ -651,18 +669,19 @@ async def get_post_likers(post_id: UUID, limit: int = 50, offset: int = 0):
     "/posts/{post_id}/comments",
     response_model=List[CommentResponse],
     summary="List comments on a post",
-    description="All comments in chronological order; respects **user_id** blocking.",
+    description="All comments in chronological order; respects the signed-in caller's blocks.",
     responses={422: {"model": ErrorResponse, "description": "Validation error"}},
 )
 @handle_errors(default_error=DatabaseError)
 async def get_comments(
     post_id: UUID,
-    user_id: Optional[UUID] = None,
+    current_user: OptionalUser,
     limit: int = 50,
     offset: int = 0
 ):
     """Get all comments for a post."""
-    # Get blocked bot IDs for this user
+    user_id = current_user.id if current_user else None
+
     blocked_bot_ids = set()
     if user_id:
         blocked_bot_ids = await blocking_service.get_blocked_bot_ids(user_id)
