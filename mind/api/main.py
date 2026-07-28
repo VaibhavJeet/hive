@@ -39,7 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from mind.config.settings import settings
 from sqlalchemy import select
-from mind.core.database import init_database, get_session, async_session_factory
+from mind.core.database import init_database, get_session, async_session_factory, AppUserDB
 from mind.core.llm_client import get_llm_client, get_cached_client
 from mind.memory.memory_core import get_memory_core
 from mind.scheduler.activity_scheduler import create_scheduler, create_orchestrator
@@ -53,10 +53,13 @@ from mind.api.routes import (
     admin_router, blocking_router, scaling_router, civilization_router,
     settings_router, system_router
 )
+from mind.api.routes.admin import require_admin
 from mind.api.routes.evolution import router as evolution_router
 from mind.api.routes.metrics import router as metrics_router
 from mind.notifications.notification_service import get_notification_service
 from mind.notifications.push_service import get_push_service
+from mind.api.dependencies import get_current_user
+from mind.core.auth import AuthenticatedUser
 from mind.monitoring.middleware import MetricsMiddleware
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -604,8 +607,15 @@ async def list_communities():
     description="Creates a community and seeds **initial_bot_count** AI companions.",
     responses={422: {"description": "Validation error"}},
 )
-async def create_community(request: CreateCommunityRequest):
-    """Create a new community with AI companions."""
+async def create_community(
+    request: CreateCommunityRequest,
+    admin: AppUserDB = Depends(require_admin),
+):
+    """Create a new community with AI companions.
+
+    HIVE-138: admin only. This seeds up to 200 bots, each of which is LLM work — it was
+    anonymous, so one request was an unmetered spend and a mass-write in one.
+    """
     async with async_session_factory() as session:
         community = await app.state.orchestrator.community_manager.create_community(
             session=session,
@@ -717,10 +727,17 @@ async def get_community_bots(community_id: UUID, limit: int = 50):
         422: {"description": "Validation error"},
     },
 )
-async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
+async def send_message_to_bot(
+    bot_id: UUID,
+    request: MessageRequest,
+    current_user: "AuthenticatedUser" = Depends(get_current_user),
+):
     """
     Send a message to an AI companion and get a response.
     This endpoint handles the full pipeline: memory, emotion, generation, naturalization.
+
+    HIVE-138: requires a session. Every call performs memory recall and an LLM
+    generation, so anonymous access was unmetered inference on the operator's budget.
     """
     from sqlalchemy import select
     from mind.core.database import BotProfileDB
@@ -851,8 +868,15 @@ async def send_message_to_bot(bot_id: UUID, request: MessageRequest):
     description="Creates **num_communities** communities and seeds bots via the orchestrator.",
     responses={422: {"description": "Validation error"}},
 )
-async def initialize_platform(num_communities: int = 10):
-    """Initialize the platform with communities and bots."""
+async def initialize_platform(
+    admin: AppUserDB = Depends(require_admin),
+    num_communities: int = 10,
+):
+    """Initialize the platform with communities and bots.
+
+    HIVE-138: admin only. The default creates 10 communities of ~50 bots — roughly 500
+    bot generations from a single anonymous POST.
+    """
     communities = await app.state.orchestrator.initialize_platform(
         num_communities=num_communities
     )
@@ -875,8 +899,11 @@ async def initialize_platform(num_communities: int = 10):
     description="Aggregated community/bot counts plus LLM and scheduler stats.",
     responses={500: {"description": "Unexpected server error"}},
 )
-async def get_platform_stats():
-    """Get platform-wide statistics."""
+async def get_platform_stats(admin: AppUserDB = Depends(require_admin)):
+    """Get platform-wide statistics.
+
+    HIVE-138: admin only — this reports LLM client internals and scheduler state.
+    """
     stats = await app.state.orchestrator.get_platform_stats()
 
     llm_client = await get_cached_client()
