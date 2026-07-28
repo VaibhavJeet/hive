@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 33 (HIVE-001…024, 028, 029, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 3/15**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 37 (HIVE-001…025, 028…032, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -1061,10 +1061,17 @@ parses as `(A and B) or C`, so any global whose name matches the fragile string 
 the compiled function regardless of callability.
 **Fix:** parenthesise; better, capture the function name from the AST instead of string-splitting.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-032 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-032 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** Entry-point selection moved into the sandbox child and now prefers a declared
+>   `enhance_`/`_auto_` name before falling back to the single user-defined function. Two tests
+>   cover it: a declared entry point beating a helper, and a non-callable global never being
+>   selected.
+> - **The precedence bug was survivable only because the feature never ran.** `(A and B) or C`
+>   could bind a non-callable, which would then fail at call time with a confusing error rather
+>   than at compile time with a clear one.
 
 ### HIVE-026 · P1 · Rate limiter leaks memory and is per-worker
 `mind/api/main.py:69-128` — `request_counts` is a `defaultdict(list)` keyed by client IP, pruned only
@@ -1151,10 +1158,19 @@ documented memory limit is annotated *"conceptual"* (`:103`) and is not enforced
 **Fix:** execute in a subprocess with `resource.setrlimit` (CPU + address space) and hard-kill on
 timeout.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** — · **Blocks:** HIVE-032
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-032 ✅
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** A `while True: pass` module now returns a timeout **and the child is
+>   gone**; `subprocess.run` kills it before returning.
+> - **The old timeout was worse than no timeout**, which is the part worth remembering.
+>   `thread.join(timeout)` returns punctually, so the caller was told "timed out" and moved on
+>   while the thread kept a CPU core busy for the life of the process. A timeout that reports
+>   success at stopping work it did not stop is a **misleading** control, not merely a weak one.
+> - **Memory and CPU limits are now real on POSIX** (`RLIMIT_AS`, `RLIMIT_CPU`) and absent on
+>   Windows, where the process boundary and the kill still apply. That is stated in the module
+>   rather than annotated "conceptual" as the old limit was.
 
 ### HIVE-031 · P1 · `ALLOWED_AST_NODES` is defined and never used
 `mind/scaling/self_coding_sandbox.py:189-265` declares a 60-entry AST whitelist; `validate_code`
@@ -1163,10 +1179,22 @@ the code does not perform.
 **Fix:** enforce the whitelist — reject any node not in the set — or delete the constant and correct
 the docstring.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** — · **Blocks:** HIVE-032
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-032 ✅
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** `ALLOWED_AST_NODES` is consulted; unknown node types are rejected by
+>   name. `class`, `async def`, `global` and `yield` are now refused rather than warned about.
+> - **Turning it on exposed gaps that existed because it had never run.** The list was missing
+>   `keyword`, `Assert`, `AnnAssign`, `Try`, `ExceptHandler`, `Raise`, the bitwise operators and
+>   several others — all of which appear in ordinary function bodies. A whitelist nobody has
+>   executed is a **draft**, not a control.
+> - **I also removed an entry I had just added.** `withitem` cannot occur while `ast.With` is
+>   absent from the list; leaving it in would imply `with` was supported. Keeping a whitelist
+>   honest matters more than keeping it generous.
+> - **This is the fourth instance of the HIVE-010 pattern** — a docstring asserting a safety
+>   property no code implements. After story viewers, `verify_admin` and `_prepare_query`, that
+>   is now a documented characteristic of this codebase rather than an observation.
 
 ### HIVE-032 · ~~P1~~ **P0** · The weaker of the two sandboxes is the one in use
 `mind/engine/bot_self_coding.py:181` `exec()`s LLM-generated code guarded by a substring denylist,
@@ -1176,20 +1204,33 @@ stricter `mind/scaling/self_coding_sandbox.py` is imported by nothing but its ow
 **Fix:** delete the ad-hoc sandbox in `bot_self_coding.py`; route all generated code through the
 hardened executor from HIVE-030/031.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-030, HIVE-031 · **Blocks:** HIVE-025, HIVE-014 ✅ (kill switch)
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-030 ✅, HIVE-031 ✅ · **Blocks:** HIVE-025 ✅, HIVE-014 ✅
 > **Blockers:** _none recorded_
 > **Feedback:**
-> - _28-07-2026_ — **Re-rated P1 → P0 during HIVE-014.** The sandbox is not a latent
->   weakness: `POST /evolution/bots/{id}/trigger-self-coding` fed **caller-supplied text**
->   straight into the prompt that generates the code this sandbox then `exec()`s. That
->   made it a remote code execution path, reachable anonymously until HIVE-014.
-> - **Mitigated, not fixed.** The endpoint is now admin-only *and* disabled by default
->   (`AIC_SELF_CODING_HTTP_TRIGGER_ENABLED`). **Leave that flag off until this task lands.**
-> - The engine's internal self-coding loop still runs generated code through the same
->   `exec()`. Bot cognition is a less attacker-controlled input than an HTTP parameter,
->   but it is LLM output executed in-process with `getattr` available — the loop should
->   move to the hardened executor at the same time.
+> - **Done, AC verified.** 28 tests. Every escape that defeats a substring denylist by
+>   concatenation — `__import__`, `getattr`, `open`, `eval`, `globals` — now fails inside the
+>   child, and the sandbox's own six self-tests pass against the new executor.
+> - **Two barriers, neither trusted alone.** The AST whitelist is a static check against
+>   adversarial input, which is a losing game played by itself; the process boundary is what
+>   makes a bypass survivable rather than fatal. The previous design had one barrier and it was
+>   the losing one.
+> - 🪤 **`multiprocessing` was the wrong tool and cost me a rewrite.** With the `spawn` start
+>   method it re-imports the parent module in the child — here the entire `mind` package,
+>   database engine included — on every sandbox call. My first implementation did exactly that
+>   and **every single invocation timed out**. `subprocess` with a self-contained child that
+>   imports nothing from this project is both correct and faster. Worth knowing before anyone
+>   reaches for `multiprocessing` elsewhere in this codebase.
+> - **The JSON boundary is a feature, not a limitation.** No object graph crosses into untrusted
+>   code, which removes a whole category of escape that a shared namespace permits. The one cost
+>   is that module context must be JSON-serialisable — verified true at the only call site
+>   (`post_loop.py:472`).
+> - ✅ **`AIC_SELF_CODING_HTTP_TRIGGER_ENABLED` is now defensible to turn on.** HIVE-014 disabled
+>   it because an admin-only RCE is still an RCE; with the sandbox replaced, the endpoint turns
+>   an API parameter into *sandboxed* code execution. **It stays opt-in and admin-only** — I
+>   have not changed the default, and would not without a deliberate decision from you.
+> - **The engine's internal self-coding loop is fixed too**, not just the HTTP path. Both now go
+>   through `execute_module`, which runs out of process.
 
 ### HIVE-033 · P1 · `create_all()` competes with Alembic as schema authority
 `mind/core/database.py` `init_database()` runs `Base.metadata.create_all` on every startup, alongside
