@@ -462,13 +462,45 @@ async def get_direct_messages(
     limit: int = Query(default=50, le=100),
     before_id: Optional[UUID] = None
 ):
-    """Get messages in a DM conversation."""
+    """Get messages in a DM conversation the caller is part of.
+
+    HIVE-005: this previously filtered on `conversation_id` alone. Conversation ids are
+    built as `f"{min(id_a, id_b)}_{max(id_a, id_b)}"` (see `send_direct_message`), so
+    they are derivable from two UUIDs — and bot UUIDs are public via
+    `/communities/{id}/bots`. Any signed-in user could therefore read any private
+    thread by constructing its id. Participation is now required.
+    """
     user_id = current_user.id
 
     async with async_session_factory() as session:
+        # Participation check: 404 rather than 403, so a non-participant cannot use
+        # the status code to learn whether a given conversation exists.
+        participation_stmt = (
+            select(DirectMessageDB.id)
+            .where(DirectMessageDB.conversation_id == conversation_id)
+            .where(
+                or_(
+                    DirectMessageDB.sender_id == user_id,
+                    DirectMessageDB.receiver_id == user_id,
+                )
+            )
+            .limit(1)
+        )
+        participation = await session.execute(participation_stmt)
+        if participation.first() is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
         stmt = (
             select(DirectMessageDB)
             .where(DirectMessageDB.conversation_id == conversation_id)
+            # Defence in depth: even inside a conversation the caller is part of,
+            # only rows they sent or received are returned.
+            .where(
+                or_(
+                    DirectMessageDB.sender_id == user_id,
+                    DirectMessageDB.receiver_id == user_id,
+                )
+            )
             .order_by(desc(DirectMessageDB.created_at))
             .limit(limit)
         )
