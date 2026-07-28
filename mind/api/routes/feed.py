@@ -634,10 +634,19 @@ async def create_comment(
     "/posts/{post_id}/likers",
     response_model=List[AuthorInfo],
     summary="List users who liked a post",
-    responses={422: {"model": ErrorResponse, "description": "Validation error"}},
+    description="Requires authentication: this enumerates identities, unlike the anonymous post reads.",
+    responses={
+        401: {"model": ErrorResponse, "description": "Authentication required"},
+        422: {"model": ErrorResponse, "description": "Validation error"},
+    },
 )
 @handle_errors(default_error=DatabaseError)
-async def get_post_likers(post_id: UUID, limit: int = 50, offset: int = 0):
+async def get_post_likers(
+    post_id: UUID,
+    current_user: CurrentUser,
+    limit: int = 50,
+    offset: int = 0,
+):
     """Get all users who liked a post."""
     async with async_session_factory() as session:
         stmt = (
