@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 37 (HIVE-001…025, 028…032, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 38 (HIVE-001…026, 028…032, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -1080,10 +1080,29 @@ for IPs that make a new request. Idle IPs are never evicted, so the dict grows w
 on restart.
 **Fix:** move to a Redis-backed sliding window (Redis is already a dependency); add periodic eviction.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** Counting moved to `mind/core/rate_limit.py`: a Redis sorted set per client,
+>   so the window is shared across workers and idle keys expire by TTL. 11 tests.
+> - **Redis is not a hard dependency.** If it is down the limiter falls back to in-process
+>   counting — refusing traffic because the *cache* is unavailable is a worse failure than
+>   briefly limiting per-worker. The fallback is LRU-bounded at 10k clients, which is the
+>   part the original got wrong: it pruned an IP's list only when that IP made a **new**
+>   request, so anything seen once was kept forever and a scan grew the dict without limit.
+> - 🔴 **Two findings not in the task description, the first more serious than the task.**
+>   `X-Forwarded-For` was trusted **unconditionally**, so a caller could send any value and
+>   reset their own budget — **the rate limiter was optional for anyone who read the
+>   source**. It is now honoured only when `TRUSTED_PROXY_HEADERS` is set, defaulting off,
+>   because the header is only meaningful when a proxy you control overwrites it.
+> - **`/health` was exempt but `/health/detailed` was not.** Throttling a liveness or
+>   readiness probe makes an overloaded server look *dead* and get restarted — the opposite
+>   of what you want under load. Same family as HIVE-135's probe misconfiguration.
+> - **A test of mine was wrong first, for the third time this session.** I asserted five
+>   requests under a per-minute limit of five were allowed, using a fixture with a burst
+>   limit of three — the burst control tripped first. The test conflated two independent
+>   limits. Worth the pattern: when a new test fails, suspect the test before the code.
 
 ### HIVE-027 · P1 · `age_all_bots` loads the entire living population into memory
 `mind/civilization/lifecycle.py:163-166` — unbounded `SELECT` of all living lifecycles, then a Python
