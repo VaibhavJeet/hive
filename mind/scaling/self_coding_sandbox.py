@@ -262,6 +262,31 @@ class SandboxExecutor:
 
         # Starred (for unpacking)
         ast.Starred,
+
+        # Node types that appear in any valid function body and were missing from the
+        # original list — it had never been executed, so nothing exposed the gaps.
+        ast.arguments,
+        ast.keyword,
+        ast.Assert,
+        ast.AnnAssign,
+        ast.NamedExpr,
+        ast.Tuple,
+        ast.Del,
+        ast.Delete,
+        ast.FloorDiv,
+        ast.MatMult,
+        ast.BitAnd,
+        ast.BitOr,
+        ast.BitXor,
+        ast.LShift,
+        ast.RShift,
+        ast.Invert,
+        ast.Dict,
+        ast.Set,
+        ast.Slice,
+        ast.ExceptHandler,
+        ast.Try,
+        ast.Raise,
     }
 
     def __init__(
@@ -327,6 +352,17 @@ class SandboxExecutor:
 
         # Validate AST nodes
         for node in ast.walk(tree):
+            # HIVE-031: enforce ALLOWED_AST_NODES. It was declared with 60 entries and
+            # never consulted — the walk below only blacklisted a handful of node types,
+            # so the docstring promised whitelisting the code did not do. A whitelist is
+            # the only side of this that is safe to get wrong: an unknown node type is
+            # rejected rather than quietly permitted.
+            if type(node) not in self.ALLOWED_AST_NODES:
+                errors.append(
+                    f"Syntax not allowed in sandbox: {type(node).__name__}"
+                )
+                continue
+
             # Check for imports
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 errors.append("Import statements are not allowed")
@@ -408,15 +444,10 @@ class SandboxExecutor:
 
         timeout = timeout or self.default_timeout
 
-        # Create sandbox globals
-        sandbox_globals = self._create_sandbox_globals()
-
-        # Add context
-        if context:
-            sandbox_globals['context'] = context
-
-        # Execute with timeout
-        result = self._execute_with_timeout(code, sandbox_globals, timeout)
+        # HIVE-030: there is no in-process sandbox namespace any more. The child
+        # interpreter builds its own restricted globals; nothing from this process is
+        # handed to untrusted code, which is what `_create_sandbox_globals` used to do.
+        result = self._execute_with_timeout(code, {"context": context or {}}, timeout)
 
         execution_time = (time.time() - start_time) * 1000  # ms
 
@@ -439,57 +470,33 @@ class SandboxExecutor:
             memory_used_bytes=result.get('memory', 0)
         )
 
-    def _create_sandbox_globals(self) -> Dict[str, Any]:
-        """Create the sandbox execution environment."""
-        return {
-            '__builtins__': self.SAFE_BUILTINS.copy(),
-            'datetime': datetime,  # Limited datetime access
-        }
-
     def _execute_with_timeout(
         self,
         code: str,
         sandbox_globals: Dict[str, Any],
         timeout: int
     ) -> Dict[str, Any]:
-        """Execute code with timeout protection."""
-        result = {'output': None, 'error': None, 'memory': 0}
+        """Execute code in the out-of-process sandbox.
 
-        def execute():
-            try:
-                # Compile and execute
-                compiled = compile(code, '<sandbox>', 'exec')
-                exec(compiled, sandbox_globals)
+        HIVE-030: this used to run `exec()` on a daemon thread and call
+        `thread.join(timeout)`. `join` returns when the timer expires but does not stop
+        the thread, so a runaway loop kept a CPU core busy for the life of the process —
+        the timeout reported a failure it had not actually enforced. The documented
+        memory limit was annotated "conceptual" and was not enforced at all.
 
-                # Find and call the function
-                for name, obj in sandbox_globals.items():
-                    if callable(obj) and name.startswith('enhance_'):
-                        context = sandbox_globals.get('context', {})
-                        result['output'] = obj(context)
-                        return
+        Execution now happens in a child interpreter that is killed on timeout, with
+        address-space and CPU limits applied where the platform supports them.
+        """
+        from mind.scaling.sandbox_runner import SandboxRunner
 
-                # If no enhance_ function, look for any user-defined function
-                for name, obj in sandbox_globals.items():
-                    if callable(obj) and not name.startswith('_') and name not in self.SAFE_BUILTINS:
-                        context = sandbox_globals.get('context', {})
-                        result['output'] = obj(context)
-                        return
+        context = sandbox_globals.get("context", {})
+        outcome = SandboxRunner(timeout_seconds=timeout).run(code, context)
 
-                result['error'] = "No callable function found in code"
-
-            except Exception as e:
-                result['error'] = f"{type(e).__name__}: {str(e)}"
-
-        # Run in thread with timeout
-        thread = threading.Thread(target=execute)
-        thread.daemon = True
-        thread.start()
-        thread.join(timeout=timeout)
-
-        if thread.is_alive():
-            result['error'] = f"Execution timeout after {timeout} seconds"
-
-        return result
+        return {
+            "output": outcome["output"],
+            "error": outcome["error"],
+            "memory": 0,
+        }
 
     def get_allowed_operations(self) -> List[str]:
         """

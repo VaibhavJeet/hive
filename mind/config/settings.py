@@ -285,9 +285,11 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "Expose POST /evolution/bots/{id}/trigger-self-coding. Caller-supplied text "
-            "is interpolated into the prompt that generates code which is then exec()'d "
-            "in-process, behind a denylist that string concatenation defeats. Keep this "
-            "off until the sandbox is replaced (HIVE-032)."
+            "is interpolated into the prompt that generates the code. Since HIVE-032 that "
+            "code runs in a killable child interpreter behind an AST whitelist rather "
+            "than in-process behind a substring denylist, so this is defensible to "
+            "enable — but it still turns an API parameter into code execution, so it "
+            "stays opt-in and admin-only."
         ),
     )
 

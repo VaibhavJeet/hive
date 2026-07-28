@@ -57,7 +57,6 @@ class CodeModule:
     success_rate: float = 0.5
     is_active: bool = True
     learned_from: str = ""
-    compiled_func: Optional[Callable] = None
 
 
 @dataclass
@@ -85,112 +84,55 @@ class BotSelfCoder:
         self.bot = bot
         self.modules: Dict[str, CodeModule] = {}
         self.code_history: List[Dict[str, Any]] = []
-        self.sandbox_globals = self._create_sandbox()
-
-    def _create_sandbox(self) -> Dict[str, Any]:
-        """Create a restricted execution environment."""
-        safe_builtins = {
-            'len': len,
-            'str': str,
-            'int': int,
-            'float': float,
-            'bool': bool,
-            'list': list,
-            'dict': dict,
-            'set': set,
-            'tuple': tuple,
-            'range': range,
-            'enumerate': enumerate,
-            'zip': zip,
-            'map': map,
-            'filter': filter,
-            'sorted': sorted,
-            'reversed': reversed,
-            'min': min,
-            'max': max,
-            'sum': sum,
-            'abs': abs,
-            'round': round,
-            'any': any,
-            'all': all,
-            'isinstance': isinstance,
-            'hasattr': hasattr,
-            'getattr': getattr,
-            'True': True,
-            'False': False,
-            'None': None,
-        }
-        return {
-            '__builtins__': safe_builtins,
-            'datetime': datetime,
-        }
 
     def _validate_code(self, code: str) -> Tuple[bool, str]:
         """
         Validate code for safety before execution.
 
+        HIVE-032: this used to be a substring denylist, which string concatenation
+        defeats (`getattr(x, "__cl" + "ass__")` never contains `__class__`), with
+        `getattr` sitting in its own safe-builtins. It now defers to
+        `SandboxExecutor.validate_code`, which enforces an AST whitelist — the only
+        side of this that is safe to get wrong, since an unrecognised construct is
+        rejected rather than quietly allowed.
+
         Returns:
             (is_valid, error_message)
         """
-        # Forbidden constructs
-        forbidden = [
-            'import ', 'from ', '__import__',
-            'exec(', 'eval(',
-            'open(', 'file(',
-            'os.', 'sys.', 'subprocess',
-            '__class__', '__bases__', '__mro__',
-            '__globals__', '__code__',
-            'compile(', 'globals(', 'locals(',
-            'delattr', 'setattr',
-            'breakpoint', 'input(',
-        ]
+        from mind.scaling.self_coding_sandbox import get_sandbox_executor
 
-        code_lower = code.lower()
-        for f in forbidden:
-            if f.lower() in code_lower:
-                return False, f"Forbidden construct: {f}"
-
-        # Try to parse the AST
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return False, f"Syntax error: {e}"
-
-        # Check AST for dangerous nodes
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                return False, "Import statements not allowed"
-            if isinstance(node, ast.ImportFrom):
-                return False, "Import statements not allowed"
-
-        return True, ""
+        result = get_sandbox_executor().validate_code(code)
+        if result.is_valid:
+            return True, ""
+        return False, "; ".join(result.errors) or "Code rejected by sandbox validator"
 
     def _compile_module(self, module: CodeModule) -> bool:
-        """Compile a module's code into a callable function."""
-        try:
-            # Wrap the code in a function definition if not already
-            code = module.code.strip()
-            if not code.startswith("def "):
-                # Wrap in a function
-                func_name = f"_auto_{module.id.replace('-', '_')}"
-                code = f"def {func_name}(context):\n" + "\n".join(
-                    f"    {line}" for line in code.split("\n")
-                )
+        """Prepare a module for execution.
 
-            # Compile and execute to get the function
-            exec(code, self.sandbox_globals)
+        HIVE-032: this used to `exec()` the generated code into a long-lived
+        in-process namespace and keep the resulting callable. Nothing is executed here
+        any more — the code is only validated, and it runs in a child interpreter at
+        call time (`execute_module`). The module's source is the artefact we keep.
 
-            # Find the function we just defined
-            for name, obj in self.sandbox_globals.items():
-                if callable(obj) and name.startswith("_auto_") or name == code.split("(")[0].replace("def ", ""):
-                    module.compiled_func = obj
-                    return True
+        HIVE-025: the old function-selection line was
+        `callable(obj) and name.startswith("_auto_") or name == <string split>`, which
+        parses as `(A and B) or C` and could bind a non-callable. Entry-point selection
+        now lives in the sandbox child, which prefers a declared `enhance_`/`_auto_`
+        name before falling back.
+        """
+        code = module.code.strip()
+        if not code.startswith("def "):
+            func_name = f"_auto_{module.id.replace('-', '_')}"
+            body = "\n".join(f"    {line}" for line in code.split("\n"))
+            code = f"def {func_name}(context):\n" + body
+            module.code = code
 
+        is_valid, error = self._validate_code(code)
+        if not is_valid:
+            logger.warning(f"Module {module.name} rejected by validator: {error}")
             return False
 
-        except Exception as e:
-            logger.warning(f"Failed to compile module {module.name}: {e}")
-            return False
+        return True
 
     async def analyze_and_code(
         self,
@@ -414,7 +356,6 @@ def enhance_[name](context):
             # Update the module
             old_module.code = code
             old_module.version += 1
-            old_module.compiled_func = None
 
             if not self._compile_module(old_module):
                 return SelfCodingResult(success=False, module=None, error="Compile failed")
@@ -435,23 +376,26 @@ def enhance_[name](context):
         module_id: str,
         context: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Execute a self-coded module with given context."""
+        """Execute a self-coded module in the out-of-process sandbox (HIVE-030/032)."""
         if module_id not in self.modules:
             return None
 
         module = self.modules[module_id]
-        if not module.is_active or not module.compiled_func:
+        if not module.is_active or not module.code:
             return None
 
-        try:
-            result = module.compiled_func(context)
+        from mind.scaling.sandbox_runner import get_sandbox_runner
+
+        result = get_sandbox_runner().run(module.code, context)
+
+        if result["success"]:
             module.times_used += 1
-            return result
-        except Exception as e:
-            logger.warning(f"Module {module.name} execution failed: {e}")
-            # Decrease success rate
-            module.success_rate = max(0, module.success_rate - 0.1)
-            return None
+            output = result["output"]
+            return output if isinstance(output, dict) else {"result": output}
+
+        logger.warning(f"Module {module.name} execution failed: {result['error']}")
+        module.success_rate = max(0, module.success_rate - 0.1)
+        return None
 
     def find_applicable_modules(
         self,
