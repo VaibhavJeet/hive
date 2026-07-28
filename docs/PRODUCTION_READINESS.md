@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 42 (HIVE-001…035 except 037+, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 45 (HIVE-001…036, 068, 119, 120, 125, 129, 131, 133, 135, 138)  ·  **HIVE-119 DECIDED — both layers stay**  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -1335,10 +1335,26 @@ alongside timezone-aware values.
 **Fix:** mechanical migration to `datetime.now(timezone.utc)`; make DB columns `DateTime(timezone=True)`
 in a migration.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** — · **Blocks:** —
+> **Status:** `Done` (step 1 of 2) · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-140
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** All **360** call sites across **70** files now go through
+>   `mind/core/time.utcnow()`. Behaviour is identical to the millisecond; the deprecation is
+>   gone; "what time is it" is one decision in one place. 6 tests.
+> - 🔴 **The obvious fix would have been actively harmful, which is the finding here.** Swapping
+>   each call for `datetime.now(timezone.utc)` makes Python values **aware** while all **65**
+>   `DateTime` columns stay **naive** — and comparing the two raises
+>   `TypeError: can't compare offset-naive and offset-aware datetimes`. A 360-site sed would
+>   have produced runtime failures in whichever path happened to mix them: rare, scattered, and
+>   only under real data — close to the worst possible failure distribution.
+> - **Split into two steps deliberately.** Step 1 removes the deprecation with zero behaviour
+>   change. Step 2 — actually becoming timezone-aware — is now **one function body plus one
+>   migration**, filed as **HIVE-140**. It needs a live database, so doing it here would have
+>   meant shipping 360 unverified edits.
+> - **A test asserts no `datetime.utcnow()` survives anywhere in `mind/`** (ignoring comments and
+>   docstrings). Half-migrating is the failure mode worth guarding: a stray call reintroduces a
+>   second source of truth, and the entire value of this change is that there is only one.
 
 ---
 
@@ -1346,6 +1362,34 @@ in a migration.
 
 ~7,000 LOC that no execution path can reach. Each task is a **decide-then-act**: wire it up or delete
 it. Leaving it is the worst option — it inflates the apparent feature set and rots.
+
+### HIVE-140 · P2 · Make stored timestamps timezone-aware
+Step 2 of HIVE-036. Every call site now goes through `mind/core/time.utcnow()`, which returns a
+**naive** UTC datetime — deliberately, because all 65 `DateTime` columns are naive and mixing the
+two raises `TypeError`.
+
+Becoming genuinely timezone-aware is now a small, coherent change rather than a 360-site sweep:
+
+1. A migration moving every `DateTime` column to `DateTime(timezone=True)` (Postgres `timestamptz`).
+   Existing values are UTC already, so the cast is a relabel rather than a conversion — but that is
+   an assumption worth verifying against real rows before running it.
+2. `utcnow()` returns `datetime.now(timezone.utc)` instead of stripping the tzinfo.
+3. `Mapped[datetime]` annotations, and any leftover `.replace(tzinfo=...)`.
+
+**Needs a live database**: the migration must be checked against real data, and the failure mode
+(naive/aware comparison) only appears at runtime on paths that mix them.
+**AC:** columns are `timestamptz`; `utcnow()` returns an aware value; the suite passes against a
+migrated database.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-036 ✅ · **Blocks:** —
+> **Blockers:**
+> - _28-07-2026_ — ⛔ **Needs a live Postgres.** Deferred from HIVE-036 rather than shipped
+>   unverified: 360 edits whose failure mode is a runtime `TypeError` on untested paths is exactly
+>   the change that should not be made blind.
+> **Feedback:**
+> - _28-07-2026_ — The expensive half is done. This is one function body, one migration, and a
+>   verification pass.
 
 ### HIVE-037 · P1 · Decide the fate of the entire channels package (1,310 LOC)
 `mind/channels/` — `channel_service.py` and `webhook.py` have **zero importers**; `discord.py`,
@@ -2459,20 +2503,41 @@ or a social platform populated by an AI civilization (in which case the docs are
 Nearly every P0 in Epic A only exists because of the undocumented half. **Answer this first — it
 changes the scope of Epics A, C, and F.**
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** — · **Blocks:** HIVE-003, HIVE-004, HIVE-005, HIVE-006, HIVE-007, HIVE-008, HIVE-009, HIVE-010, HIVE-011, HIVE-012, HIVE-014, HIVE-016, HIVE-037, HIVE-039, HIVE-040, HIVE-042, HIVE-043, HIVE-047, HIVE-080, HIVE-083, HIVE-091, HIVE-095, HIVE-118, HIVE-120, HIVE-124
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** (25 tasks — now unblocked)
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - ✅ **DECIDED: Hive is a social platform whose population is an AI civilization, observed and
+>   joined by humans. Both halves stay.** Recorded in `CLAUDE.md` ("Scope") and `README.md`.
+> - **The evidence is structural, not editorial**, which is why I was willing to decide it:
+>   `mind/engine/` references the post/chat tables **67 times** — the social graph *is* the
+>   civilization's substrate, so "delete the social half" was never actually on the table. And
+>   it references `AppUserDB` **zero** times: the civilization does not know humans exist.
+>   `blocking`, `moderation`, `notifications`, `media`, `analytics` and `search` have **no engine
+>   references at all**. The seam between the two layers is clean and already load-bearing.
+> - **So the undocumented half is a documentation gap, not accumulated scope.** Deleting ~40k LOC
+>   would have destroyed a working product surface to resolve a README omission.
+> - **What this unblocks:** every Epic A task hedged on it is confirmed rather than provisional,
+>   and HIVE-134/137/095 become genuine gaps rather than dead ends — user→user blocking, one
+>   account system, and followers are all things a real human layer needs.
+> - ⚠️ **One adjacent question I deliberately did not decide.** Which of the two account systems
+>   survives (HIVE-137) is a product question with a migration attached; the structural evidence
+>   settles the scope question but says nothing about that one. It stays open.
 
 ### HIVE-120 · P3 · `CLAUDE.md` architecture section is out of date
 Lists 5 subdirectories under `mind/`; there are 21. Omits `intelligence/`, `scaling/`, `moderation/`,
 `analytics/`, `notifications/`, `capabilities/`, `media/`, `stories/`, `search/`, `hashtags/`,
 `blocking/`, `monitoring/`, `agents/`, `communities/`, `prompts/`, `scheduler/`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** The tree lists all 21 subdirectories, grouped by layer (civilization / human
+>   platform / shared infrastructure) rather than flat — so the grouping carries the HIVE-119
+>   decision instead of merely restating it.
+> - `mind/channels/` is marked **NOT WIRED** inline. A reader should not have to consult the
+>   backlog to learn that a listed subsystem cannot run.
 
 ### HIVE-121 · P3 · Worklog discipline lapsed
 `CLAUDE.md:91-100` mandates a worklog entry per session. Three exist (20, 21, 28 March 2026); the
