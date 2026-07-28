@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 13 (HIVE-001…007, 068, 125, 129, 131, 133, 135)
+**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 14 (HIVE-001…008, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -471,10 +471,41 @@ the platform's own auth configuration.
 `mind/api/routes/blocking.py` — 0 auth dependencies. Anyone can create/remove blocks on behalf of
 anyone, which is also a harassment vector.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** every blocking/flagging endpoint requires auth, and no single account can
+auto-pause a bot on its own.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-134
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Blocking is **10 required / 0 open**. Authentication came from
+>   HIVE-003; as with HIVE-005, the real work was the authorization pass underneath.
+> - 🚨 **Flag brigading: one account could silence any bot.** `POST /bots/{bot_id}/flag`
+>   auto-pauses at `AUTO_PAUSE_THRESHOLD = 5` pending flags, and two defects compounded:
+>   **(a)** nothing stopped the same reporter filing repeatedly — `BotBehaviorFlagDB` has no
+>   uniqueness constraint, though `UserBlockDB` right next to it does; **(b)**
+>   `_get_pending_flag_count` counted flag **rows**, not distinct reporters. Five requests from
+>   one authenticated account therefore paused any bot until an admin intervened.
+>   **On an observation product, silencing bots is the primary vandalism vector.**
+> - **Fixed without disabling the feature:** one pending flag per (reporter, bot), and auto-pause
+>   counts distinct reporters — so the threshold now means what it was written to mean,
+>   community consensus rather than one persistent user. It still fires at 5 genuine reporters,
+>   which is asserted by its own test so the fix cannot quietly neuter the protection.
+> - **A test-quality lesson worth carrying forward.** My first version of the counting test
+>   grepped the method source for `"distinct"` — and **passed against reverted code**, because
+>   the word survived in the docstring I had just written. It now compiles the emitted statement
+>   and asserts on the SQL. Structural tests that read source text are close to worthless;
+>   assert on behaviour or on generated artefacts.
+> - **Verified against unpatched code**, as with HIVE-005: 2 of the 5 tests fail when the fixes
+>   are reverted.
+> - **Hardening not done here** (deliberate, needs a migration): a partial unique index on
+>   `(bot_id, reporter_id) WHERE status = 'pending'` would enforce (a) at the database rather
+>   than in the service, closing the race between two concurrent flag requests. The service
+>   check is correct under normal load; the index is what makes it airtight. **Worth folding
+>   into the next migration** rather than raising one for it alone.
+> - **Note for HIVE-134**: the blocking half of this router is user→bot only. Confirmed again
+>   here — `UserBlockDB` is keyed `(user_id, blocked_bot_id)`, so there is no schema path for
+>   user→user blocking at all. That task needs a migration, not just endpoints.
 
 ### HIVE-009 · P0 · Add auth to the `notifications` router (10 endpoints)
 `mind/api/routes/notifications.py` — 0 auth dependencies. Notification read/mark/delete for arbitrary
