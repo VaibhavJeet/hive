@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 25 (HIVE-001…016, 028, 029, 068, 125, 129, 131, 133, 135, 138)
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 27 (HIVE-001…018, 028, 029, 068, 125, 129, 131, 133, 135, 138)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -840,19 +840,55 @@ to any user's notification stream and send DMs and chat messages as any user.
 **AC:** connecting without a valid token closes with 4401; a client cannot receive another user's
 notifications.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003 · **Blocks:** —
+**AC:** connecting without a valid token closes the socket; a client cannot receive another
+user's notifications or act as another user.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** 10 tests across both sockets. Closed together with **HIVE-018** —
+>   same file, same flaw shape, and the shared `_authenticate_socket` helper is the fix for both.
+> - **This was HIVE-003's blind spot.** That task removed actor-identity parameters across the
+>   REST surface, and I measured the result with a route-tree walk — which does not see WebSocket
+>   endpoints. The socket kept trusting `data["user_id"]` from the frame body for another
+>   fourteen tasks. **Coverage tooling only covers what it enumerates**, which is the same lesson
+>   as HIVE-138 (endpoints in `main.py` that the per-module audit never filed a task for).
+> - **Token goes in the query string**, because browsers cannot set headers on a WebSocket
+>   upgrade. That is standard, but it means **the token can land in access logs** — noted at the
+>   helper. Keep WS access logging off, or scrub the query string, before deploying.
+> - **The `auth` frame is kept but neutered.** Removing it would break `cell/` and the portal;
+>   it now just echoes back which user the server resolved. Clients get a confirmation, not a
+>   claim.
+> - 🪤 **A test-design fix worth carrying forward.** Reverting the server change made my
+>   close-code assertions **hang** rather than fail — they blocked on `receive_json()` waiting for
+>   a close that never came. A hanging test is worse than a failing one: in CI it burns the job
+>   timeout and reports nothing useful. The helper now sends a `ping` and fails with a clear
+>   message if the socket stays open. **Verify negative tests by reverting the fix**, not just by
+>   watching them pass.
 
 ### HIVE-018 · P0 · Fix admin WebSocket auth
 `mind/api/main.py:1153-1182` — same `X-User-ID`-equivalent flaw: `admin_id` is taken from the URL path
 and merely looked up. Move to token-based auth alongside HIVE-001.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-001, HIVE-003 · **Blocks:** —
+**AC:** the admin socket rejects a bare UUID and a non-admin token.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-001 ✅, HIVE-003 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Closed alongside HIVE-017.
+> - **This is the last surviving instance of the HIVE-001 flaw.** HIVE-001 replaced the
+>   `X-User-ID` header on the REST admin surface in the very first task of this effort; the admin
+>   *socket* carried the identical pattern — UUID in the path, looked up, trusted — and outlived
+>   it by seventeen tasks because it lives in `main.py` rather than `routes/admin.py`.
+> - **Worth stating plainly:** when a vulnerability class is fixed, grep for the *pattern*, not
+>   the file. `admin_id`/`user_id` taken from a path or header and merely looked up appeared in
+>   four places (REST admin, blocking's `verify_admin`, this socket, and `/users/{user_id}`), and
+>   each was found separately, several tasks apart.
+> - **Close codes are now distinguishable**: `4401` unauthenticated, `4403` authenticated but not
+>   an admin. The old code closed `4003`/`4001` with overlapping meanings, which made client-side
+>   handling guesswork.
 
 ### HIVE-019 · P0 · Enforce CORS in production
 `mind/config/settings.py:242` defaults `CORS_ORIGINS="*"` and `mind/api/main.py:355-362` combines it
