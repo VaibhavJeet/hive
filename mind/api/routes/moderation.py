@@ -203,6 +203,7 @@ async def submit_report(
 
 @router.get("/reports", response_model=List[NewReportResponse], tags=["reports"])
 async def list_all_reports(
+    admin: AppUserDB = Depends(require_admin),
     status: Optional[str] = Query(None, description="Filter by status: pending, reviewed, resolved, dismissed"),
     limit: int = Query(default=50, le=100, description="Maximum number of reports to return")
 ):
@@ -309,7 +310,7 @@ async def review_report(
 
 
 @router.get("/reports/stats", response_model=ReportStatsResponse, tags=["reports"])
-async def get_report_statistics():
+async def get_report_statistics(admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get report statistics.
 
@@ -328,8 +329,24 @@ async def get_report_statistics():
     )
 
 
+@router.get("/reports/counts", response_model=ReportCountsResponse)
+async def get_reports_counts(admin: AppUserDB = Depends(require_admin)):
+    """
+    Admin: Get counts of reports by status.
+    """
+    counts = await get_report_counts()
+
+    return ReportCountsResponse(
+        pending=counts.get("pending", 0),
+        under_review=counts.get("under_review", 0),
+        resolved=counts.get("resolved", 0),
+        dismissed=counts.get("dismissed", 0),
+        escalated=counts.get("escalated", 0)
+    )
+
+
 @router.get("/reports/{report_id}", response_model=NewReportResponse, tags=["reports"])
-async def get_report_details(report_id: UUID):
+async def get_report_details(report_id: UUID, admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get details of a specific report.
     """
@@ -395,7 +412,9 @@ async def dismiss_single_report(
 
 
 @router.get("/reports/content/{target_id}", response_model=List[NewReportResponse], tags=["reports"])
-async def get_reports_for_content(target_id: UUID):
+async def get_reports_for_content(
+    target_id: UUID, admin: AppUserDB = Depends(require_admin)
+):
     """
     Admin: Get all reports for a specific piece of content.
 
@@ -495,7 +514,7 @@ async def report_content(
 
 
 @router.post("/check", response_model=ModerationCheckResponse)
-async def check_content(request: ModerationCheckRequest):
+async def check_content(request: ModerationCheckRequest, current_user: CurrentUser):
     """
     Check content against moderation policies.
 
@@ -523,6 +542,7 @@ async def check_content(request: ModerationCheckRequest):
 
 @router.get("/reports", response_model=List[ReportResponse])
 async def list_reports(
+    admin: AppUserDB = Depends(require_admin),
     status: Optional[str] = Query(None, description="Filter by status"),
     content_type: Optional[str] = Query(None, description="Filter by content type"),
     limit: int = Query(default=50, le=100),
@@ -568,24 +588,8 @@ async def list_reports(
     ]
 
 
-@router.get("/reports/counts", response_model=ReportCountsResponse)
-async def get_reports_counts():
-    """
-    Admin: Get counts of reports by status.
-    """
-    counts = await get_report_counts()
-
-    return ReportCountsResponse(
-        pending=counts.get("pending", 0),
-        under_review=counts.get("under_review", 0),
-        resolved=counts.get("resolved", 0),
-        dismissed=counts.get("dismissed", 0),
-        escalated=counts.get("escalated", 0)
-    )
-
-
 @router.get("/reports/{report_id}", response_model=ReportResponse)
-async def get_single_report(report_id: UUID):
+async def get_single_report(report_id: UUID, admin: AppUserDB = Depends(require_admin)):
     """
     Admin: Get details of a specific report.
     """

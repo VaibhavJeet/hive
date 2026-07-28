@@ -95,6 +95,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/docs", "/redoc", "/openapi.json", "/health"]:
             return await call_next(request)
 
+        # Under test every request arrives from the same synthetic client, so the
+        # limiter accumulates across the whole session and starts returning 429 —
+        # making results depend on test order. Disable it rather than weaken the
+        # limits, which would leave production under-protected. See HIVE-026 for the
+        # real fix: a Redis-backed window that is neither per-process nor unbounded.
+        if settings.ENVIRONMENT.lower() == "test":
+            return await call_next(request)
+
         client_ip = self._get_client_ip(request)
         now = time.time()
 
@@ -391,8 +399,10 @@ app.include_router(analytics_dashboard_router)
 app.include_router(media_router)
 app.include_router(stories_router)
 app.include_router(search_router)
-app.include_router(admin_router)
+# scaling_router shares the /admin prefix and defines the literal /admin/bots/retired,
+# which /admin/bots/{bot_id} in admin_router would otherwise shadow (HIVE-133 class).
 app.include_router(scaling_router)
+app.include_router(admin_router)
 app.include_router(civilization_router)
 app.include_router(settings_router)
 app.include_router(system_router)
@@ -543,7 +553,9 @@ async def detailed_health():
         "components": {
             "database": "healthy",  # Would check actual connection
             "llm": "healthy" if llm_healthy else "unavailable",
-            "scheduler": "healthy" if app.state.scheduler else "unavailable"
+            # getattr: app.state.scheduler only exists once lifespan has run. A health
+            # endpoint must report "unavailable", never crash with a 500 (HIVE-135).
+            "scheduler": "healthy" if getattr(app.state, "scheduler", None) else "unavailable"
         }
     }
 

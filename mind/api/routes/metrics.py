@@ -33,9 +33,17 @@ async def prometheus_metrics():
 
 
 @router.get(
-    "/health",
-    summary="Detailed Health Check",
-    description="Returns comprehensive health status of all system components",
+    "/health/components",
+    summary="Component Health Check",
+    description=(
+        "Comprehensive health status of all system components. Returns 503 when any "
+        "component is unhealthy, so this is a **readiness** probe, not a liveness one. "
+        "HIVE-135: this was registered at `/health` and, because metrics_router is "
+        "included before the app-level route, it shadowed the cheap liveness check in "
+        "`main.py`. A liveness probe pointed at `/health` therefore queried Postgres and "
+        "the LLM on every poll and returned 503 whenever either was down — turning a "
+        "dependency blip into a container restart loop."
+    ),
 )
 async def detailed_health_check():
     """

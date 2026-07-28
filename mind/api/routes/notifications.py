@@ -155,6 +155,35 @@ async def mark_all_notifications_read(current_user: CurrentUser):
     return MarkReadResponse(success=True, marked_count=count)
 
 
+@router.delete("/subscribe", response_model=PushSubscriptionResponse)
+async def unsubscribe_from_push(
+    current_user: CurrentUser,
+    endpoint: str = Query(..., description="Push service endpoint URL to unregister"),
+):
+    """
+    Unregister a push notification subscription.
+
+    Call this when the user revokes notification permission or logs out.
+    """
+    push_service = get_push_service()
+
+    success = await push_service.unregister_device(
+        user_id=current_user.id,
+        endpoint=endpoint,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found"
+        )
+
+    return PushSubscriptionResponse(
+        success=True,
+        message="Push subscription removed successfully",
+    )
+
+
 @router.delete("/{notification_id}")
 async def delete_notification(notification_id: UUID, current_user: CurrentUser):
     """
@@ -238,35 +267,6 @@ async def subscribe_to_push(
     return PushSubscriptionResponse(
         success=True,
         message="Push subscription registered successfully",
-    )
-
-
-@router.delete("/subscribe", response_model=PushSubscriptionResponse)
-async def unsubscribe_from_push(
-    current_user: CurrentUser,
-    endpoint: str = Query(..., description="Push service endpoint URL to unregister"),
-):
-    """
-    Unregister a push notification subscription.
-
-    Call this when the user revokes notification permission or logs out.
-    """
-    push_service = get_push_service()
-
-    success = await push_service.unregister_device(
-        user_id=current_user.id,
-        endpoint=endpoint,
-    )
-
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found"
-        )
-
-    return PushSubscriptionResponse(
-        success=True,
-        message="Push subscription removed successfully",
     )
 
 
