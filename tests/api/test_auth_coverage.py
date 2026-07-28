@@ -100,7 +100,7 @@ EXPECTED_OPEN = {
     # Open by task, with the owning task noted. Lower these as each one closes.
     "hashtags": 3,           # HIVE-016
     "media": 3,              # HIVE-011 — public file serving
-    "users": 5,              # HIVE-012
+    "users": 4,              # register + bot/community browsing (public by design)
     "analytics": 1,          # HIVE-015
     "analytics-dashboard": 1,
     "system": 3,             # HIVE-015
