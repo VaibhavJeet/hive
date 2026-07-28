@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 38 (HIVE-001…026, 028…032, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 42 (HIVE-001…035 except 037+, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**  ·  **Epic B: 7/15**  ·  **All P0 items closed**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -1110,10 +1110,20 @@ loop with per-bot async work inside a single transaction. At the VISION target o
 fine; at any real scale it is a long-held transaction and a memory spike.
 **Fix:** batch with `yield_per` / keyset pagination; commit per batch.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-022 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-022 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** Batched at 200 with a commit per batch, so a failure part-way through keeps the
+>   aging already done rather than rolling back the whole population.
+> - 🪤 **Keyset pagination, not `OFFSET` — and I got this wrong first.** A bot that dies during
+>   the run flips `is_alive` to `False` and **drops out of the filtered set**, shifting every
+>   subsequent `OFFSET` and silently skipping that many living bots. I wrote the `OFFSET` version,
+>   spotted it while re-reading, and switched to walking by last-seen `bot_id`. Worth remembering
+>   generally: `OFFSET` is only safe when the filter cannot change under you, and here the loop
+>   mutates the very column it filters on.
+> - **Now genuinely load-bearing**, because HIVE-022 means aging actually runs and HIVE-092 means
+>   the population has no ceiling. This was a latent problem until this session made it live.
 
 ### HIVE-028 · P1 · Path traversal exposure in media file serving
 `mind/api/routes/media.py:272` and `:307` — `storage.storage_path / file_type / filename` where
@@ -1258,10 +1268,18 @@ diverge.
 **Fix:** `create_all` only under `ENVIRONMENT=test`; production startup runs (or verifies) `alembic
 upgrade head`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** HIVE-063
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** `create_all` runs only under `ENVIRONMENT=test`. Elsewhere the schema is Alembic's
+>   alone, and startup **fails with a clear message** if `alembic_version` is missing rather than
+>   quietly creating tables around the migration history.
+> - **Failing loudly is the point.** `create_all` never *alters* an existing table, so the two
+>   authorities do not conflict visibly — they diverge. A column added in a migration that was
+>   never applied simply is not there, and the error surfaces later as something unrelated.
+> - **Note for HIVE-063**: the CI migration check is now more valuable, since a missed migration
+>   fails at boot instead of being papered over.
 
 ### HIVE-034 · P1 · Calculator skill can hang the event loop
 `mind/capabilities/skills.py:277` — `eval(expr, {"__builtins__": {}}, safe_dict)` with `**` permitted
@@ -1269,10 +1287,23 @@ and no bound on operands. `9**9**9` blocks the worker.
 (Currently mitigated only because the whole `skills.py` module is unreachable — see HIVE-060.)
 **Fix:** cap operand magnitude and expression length, or use a real expression parser.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** HIVE-043 · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** Capped at 200 characters, **one** exponentiation, exponent ≤ 100. Verified: `2+2`
+>   and `2^10` still work; `9^9^9`, `9**9**9**9`, `2^5000` and a 250-character expression are all
+>   rejected in microseconds.
+> - 🪤 **My first cap did not work, and the failure mode is instructive.** I limited *each*
+>   exponent to 1000 — which `9^9^9` passes, since its exponents are 9 and 9. But `9**9**9` is
+>   `9**(9**9)`, i.e. 9 to the power of 387 million. **The test hung for the full three-minute
+>   timeout.** Chained exponentiation compounds, so it is now rejected outright rather than
+>   bounded.
+> - **This runs on the event loop**, which is what made it worth fixing even though `skills.py` is
+>   currently unreachable (HIVE-043): one such call stalls every other request in the worker, not
+>   just the caller's.
+> - **Still gated on HIVE-043.** If that task deletes `skills.py` this fix goes with it; if it
+>   wires the module up, the calculator is now safe to expose.
 
 ### HIVE-035 · P1 · 12 `except Exception: pass` blocks swallow failures silently
 36 broad `except` clauses across `mind/`, 12 of which discard the exception entirely — including the
@@ -1280,10 +1311,23 @@ civilization broadcast path (`civilization_loop.py:79-80`, `:323-324`) and the s
 (`:441-442`), where failures are invisible by design.
 **Fix:** log at `warning` with context in every one; keep the swallow only where genuinely best-effort.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done.** A scan for `except`-blocks whose entire body is `pass` or comments now returns
+>   **none**. Each site keeps its best-effort behaviour — the change is that failures are visible.
+> - **The count was 6, not the 12 the audit estimated.** My original grep counted `pass` appearing
+>   anywhere after an `except`, including handlers that also logged. The real figure is smaller
+>   and the entry overstated it.
+> - **Two of the six were doing real damage.** `system.py` swallowed a failed engine-status read,
+>   which rendered as a **blank panel with no trace** — indistinguishable from "engine is idle".
+>   And `authenticity.py` swallowed a failed closeness lookup, falling back to `0.0`, which
+>   **silently changed which bots a bot chose to engage with**. A swallowed exception that alters
+>   behaviour is worse than one that just loses information.
+> - **`media/processor.py` narrowed from bare `Exception` to `OSError`.** Only filesystem errors
+>   are expected when removing a partial file; catching everything there would have hidden a
+>   programming error inside a cleanup path.
 
 ### HIVE-036 · P1 · 358 uses of `datetime.utcnow()`
 Deprecated since Python 3.12 and returns *naive* datetimes, which are then compared against and stored
