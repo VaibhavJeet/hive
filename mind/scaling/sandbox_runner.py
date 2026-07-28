@@ -58,13 +58,34 @@ def main():
     job = json.loads(sys.stdin.read())
     _limit(job["memory_limit"], job["cpu_seconds"])
 
+    # Pure-computation modules, imported BEFORE __import__ is disabled. A bot gets
+    # exactly these and can reach nothing else. None of them touch the filesystem,
+    # the network, or the process — but together they are the difference between a
+    # bot that can only do arithmetic and one that can do statistics over its own
+    # history, match patterns in what it reads, and be randomly creative.
+    provided = {}
+    for name in job.get("modules", []):
+        try:
+            provided[name] = __import__(name)
+        except ImportError:
+            pass
+
     allowed = {
         "len": len, "str": str, "int": int, "float": float, "bool": bool,
         "list": list, "dict": dict, "set": set, "tuple": tuple, "range": range,
         "enumerate": enumerate, "zip": zip, "map": map, "filter": filter,
         "sorted": sorted, "reversed": reversed, "min": min, "max": max,
         "sum": sum, "abs": abs, "round": round, "any": any, "all": all,
-        "isinstance": isinstance, "type": type, "repr": repr, "chr": chr, "ord": ord,
+        "isinstance": isinstance, "issubclass": issubclass, "type": type,
+        "callable": callable, "repr": repr, "chr": chr, "ord": ord,
+        "format": format, "divmod": divmod, "pow": pow, "hash": hash,
+        "bytes": bytes, "bytearray": bytearray, "frozenset": frozenset,
+        "slice": slice, "iter": iter, "next": next,
+        # Exceptions a bot can legitimately raise and catch.
+        "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
+        "KeyError": KeyError, "IndexError": IndexError,
+        "ZeroDivisionError": ZeroDivisionError, "AttributeError": AttributeError,
+        "StopIteration": StopIteration, "RuntimeError": RuntimeError,
         "True": True, "False": False, "None": None,
     }
 
@@ -74,6 +95,7 @@ def main():
     builtins.__import__ = _no_imports
 
     g = {"__builtins__": dict(allowed)}
+    g.update(provided)
     try:
         exec(compile(job["code"], "<sandbox>", "exec"), g)
 
@@ -81,6 +103,8 @@ def main():
         for name, obj in g.items():
             if not callable(obj) or name.startswith("__") or name in allowed:
                 continue
+            if name in provided:
+                continue  # a provided module is not the bot's entry point
             # HIVE-025: the original selected with
             #   callable(obj) and name.startswith("_auto_") or name == <string split>
             # which parses as (A and B) or C, so a non-callable global matching a
@@ -111,13 +135,22 @@ main()
 class SandboxRunner:
     """Runs untrusted code in a killable child interpreter."""
 
+    #: Pure-computation modules made available to bot code. Kept in sync with
+    #: SandboxExecutor.SAFE_MODULES; see that docstring for why these are safe.
+    DEFAULT_MODULES = [
+        "math", "random", "statistics", "json", "re",
+        "itertools", "collections", "string", "textwrap", "difflib",
+    ]
+
     def __init__(
         self,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
         memory_limit_bytes: int = DEFAULT_MEMORY_LIMIT_BYTES,
+        modules: Optional[list] = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.memory_limit_bytes = memory_limit_bytes
+        self.modules = list(self.DEFAULT_MODULES if modules is None else modules)
 
     def run(
         self,
@@ -136,6 +169,7 @@ class SandboxRunner:
                     "context": context or {},
                     "memory_limit": self.memory_limit_bytes,
                     "cpu_seconds": self.timeout_seconds,
+                    "modules": self.modules,
                 }
             )
         except (TypeError, ValueError) as exc:

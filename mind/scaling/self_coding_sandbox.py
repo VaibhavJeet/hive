@@ -137,18 +137,55 @@ class SandboxExecutor:
 
         # Type checking
         'isinstance': isinstance,
+        'issubclass': issubclass,
         'type': type,
+        'callable': callable,
 
         # String operations
         'repr': repr,
         'chr': chr,
         'ord': ord,
+        'format': format,
+
+        # Numbers and structure — a bot writing its own analysis needs real tools
+        'divmod': divmod,
+        'pow': pow,
+        'hash': hash,
+        'bytes': bytes,
+        'bytearray': bytearray,
+        'frozenset': frozenset,
+        'slice': slice,
+        'iter': iter,
+        'next': next,
+        'print': print,
+
+        # Exceptions a bot can legitimately raise and catch
+        'Exception': Exception,
+        'ValueError': ValueError,
+        'TypeError': TypeError,
+        'KeyError': KeyError,
+        'IndexError': IndexError,
+        'ZeroDivisionError': ZeroDivisionError,
+        'AttributeError': AttributeError,
+        'StopIteration': StopIteration,
 
         # Constants
         'True': True,
         'False': False,
         'None': None,
     }
+
+    #: Pure-computation modules pre-imported inside the sandbox child.
+    #:
+    #: These vastly widen what a bot can express — statistics over its own history,
+    #: pattern matching on text, structured data, randomness for creative variation —
+    #: without opening any escape. The child's `__import__` stays disabled, so a bot
+    #: gets exactly these and can reach nothing else. None of them touch the
+    #: filesystem, the network, or the process.
+    SAFE_MODULES: List[str] = [
+        'math', 'random', 'statistics', 'json', 're',
+        'itertools', 'collections', 'string', 'textwrap', 'difflib',
+    ]
 
     # Forbidden constructs that indicate unsafe code
     FORBIDDEN_PATTERNS: List[str] = [
@@ -158,13 +195,20 @@ class SandboxExecutor:
         # Execution
         'exec(', 'eval(', 'compile(',
 
-        # File operations
-        'open(', 'file(', 'read(', 'write(',
+        # File operations. NOTE: `read(` and `write(` were in this list and are now
+        # gone — they matched any method with those names, so a bot could not write
+        # `buffer.write(x)` or `stream.read()` on its own objects. Actual file access
+        # is impossible in the child regardless: there is no `open` and no import.
+        'open(', 'file(',
 
         # System access
         'os.', 'sys.', 'subprocess', 'commands',
 
-        # Introspection that could be abused
+        # Introspection that could be abused. These are belt-and-braces now: the
+        # substring check is defeated by string concatenation anyway, which is exactly
+        # why HIVE-032 moved containment to the process boundary. Kept because
+        # rejecting the obvious attempt early gives a clearer error than a NameError
+        # from inside the child.
         '__class__', '__bases__', '__mro__',
         '__globals__', '__code__', '__builtins__',
         '__subclasses__', '__dict__',
@@ -172,10 +216,9 @@ class SandboxExecutor:
         # Dangerous operations
         'delattr', 'setattr', 'getattr(',
         'globals(', 'locals(', 'vars(',
-        'dir(', 'help(',
 
         # Network
-        'socket', 'urllib', 'requests', 'http',
+        'socket', 'urllib', 'requests',
 
         # Process control
         'exit(', 'quit(', 'breakpoint',
@@ -287,6 +330,20 @@ class SandboxExecutor:
         ast.ExceptHandler,
         ast.Try,
         ast.Raise,
+
+        # --- Widened once the subprocess boundary made the grammar stop being the ---
+        # --- thing keeping bots safe. See validate_code() for the reasoning.      ---
+
+        # Classes: a bot that can define a type can build a model of something.
+        ast.ClassDef,
+
+        # Context managers, now that there is nothing dangerous to open.
+        ast.With,
+        ast.withitem,
+
+        # Generators: iterative analysis over a bot's own history.
+        ast.Yield,
+        ast.YieldFrom,
     }
 
     def __init__(
@@ -371,17 +428,24 @@ class SandboxExecutor:
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 errors.append("Global/nonlocal statements are not allowed")
 
-            # Check for class definitions (could be used for metaprogramming)
-            if isinstance(node, ast.ClassDef):
-                warnings.append("Class definitions are restricted")
+            # Classes and exception handling are ALLOWED. They used to be treated as
+            # suspicious because this validator was the only thing standing between
+            # generated code and the API process. Since HIVE-030/032 the code runs in a
+            # separate interpreter with no import system, killed on timeout — so the
+            # process boundary does the containment, and the grammar no longer has to.
+            #
+            # That distinction matters for this project: a bot that can define a class
+            # or handle an error is a bot that can build something. Restricting syntax
+            # to keep it safe was solving the problem in the wrong layer.
 
-            # Check for async operations
-            if isinstance(node, (ast.AsyncFunctionDef, ast.Await)):
-                errors.append("Async operations are not allowed")
-
-            # Check for try/except (could mask errors)
-            if isinstance(node, ast.Try):
-                warnings.append("Exception handling is limited")
+            # Async is still refused, but for a practical reason rather than a security
+            # one: the sandbox child runs synchronously and has no event loop to await
+            # on, so async code would simply never execute.
+            if isinstance(node, (ast.AsyncFunctionDef, ast.Await, ast.AsyncFor,
+                                 ast.AsyncWith)):
+                errors.append(
+                    "Async is not available in the sandbox (no event loop in the child)"
+                )
 
             # Check for dangerous attribute access
             if isinstance(node, ast.Attribute):

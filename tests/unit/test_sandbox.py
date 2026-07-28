@@ -63,11 +63,11 @@ def test_ordinary_code_validates(validator, code):
 @pytest.mark.parametrize(
     "code,why",
     [
-        ("class Evil:\n    pass\ndef enhance_x(context):\n    return 1", "ClassDef"),
         ("async def enhance_x(context):\n    return 1", "AsyncFunctionDef"),
         ("def enhance_x(context):\n    global x\n    return 1", "Global"),
         ("import os\ndef enhance_x(context):\n    return 1", "import"),
-        ("def enhance_x(context):\n    yield 1", "Yield"),
+        ("def enhance_x(context):\n    return open('/etc/passwd')", "open"),
+        ("def enhance_x(context):\n    return eval('1')", "eval"),
     ],
 )
 def test_disallowed_syntax_is_rejected(validator, code, why):
@@ -75,10 +75,36 @@ def test_disallowed_syntax_is_rejected(validator, code, why):
     assert not result.is_valid, f"{why} was accepted"
 
 
+@pytest.mark.parametrize(
+    "code,what",
+    [
+        ("class Mood:\n    def __init__(s, v):\n        s.v = v\ndef enhance_x(context):\n    return Mood(1).v", "a class"),
+        ("def enhance_x(context):\n    def g():\n        yield 1\n    return list(g())", "a generator"),
+        ("def enhance_x(context):\n    try:\n        return 1/0\n    except ZeroDivisionError:\n        return 0", "exception handling"),
+        ("def enhance_x(context):\n    return statistics.mean([1, 2, 3])", "statistics"),
+        ("def enhance_x(context):\n    return re.findall(r'\\w+', 'i think')", "regex"),
+    ],
+)
+def test_bots_may_write_real_code(validator, code, what):
+    """Deliberately widened: these were REJECTED and now must be allowed.
+
+    The original whitelist banned classes, generators and exception handling because
+    the validator was the only thing between generated code and the API process. Since
+    the code runs in a killable child with no import system, containment lives at the
+    process boundary — so restricting the grammar bought nothing and stopped bots
+    defining a type or recovering from an error.
+    """
+    result = validator.validate_code(code)
+    assert result.is_valid, f"{what} was rejected: {result.errors}"
+
+
 def test_the_whitelist_is_actually_consulted(validator):
     """A node type absent from ALLOWED_AST_NODES must be refused by name."""
-    result = validator.validate_code("class C:\n    pass")
-    assert any("not allowed in sandbox" in e for e in result.errors), result.errors
+    result = validator.validate_code("async def enhance_x(context):\n    await x()")
+    assert not result.is_valid
+    assert any(
+        "not allowed in sandbox" in e or "Async" in e for e in result.errors
+    ), result.errors
 
 
 def test_unknown_constructs_fail_closed(validator):

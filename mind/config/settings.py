@@ -291,14 +291,15 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
 
     SELF_CODING_HTTP_TRIGGER_ENABLED: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Expose POST /evolution/bots/{id}/trigger-self-coding. Caller-supplied text "
-            "is interpolated into the prompt that generates the code. Since HIVE-032 that "
-            "code runs in a killable child interpreter behind an AST whitelist rather "
-            "than in-process behind a substring denylist, so this is defensible to "
-            "enable — but it still turns an API parameter into code execution, so it "
-            "stays opt-in and admin-only."
+            "Expose POST /evolution/bots/{id}/trigger-self-coding — ask a bot to write "
+            "code that extends itself, and watch what it produces.\n\n"
+            "On by default. Generated code runs in a separate interpreter that is killed "
+            "on timeout, has no import system, no filesystem and no network, and is "
+            "capped on memory and CPU. The endpoint is still admin-only, because it does "
+            "turn an API parameter into code execution — but containment lives in the "
+            "process boundary, not in keeping the bots' language small."
         ),
     )
 

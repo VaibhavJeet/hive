@@ -106,11 +106,26 @@ def test_github_status_is_admin_only(client_as):
 # The self-coding trigger is off unless explicitly enabled
 # ============================================================================
 
-def test_self_coding_trigger_is_disabled_by_default():
-    assert settings.SELF_CODING_HTTP_TRIGGER_ENABLED is False, (
-        "the manual self-coding trigger must default to off — caller text reaches "
-        "exec() through a bypassable denylist (HIVE-032)"
-    )
+def test_self_coding_trigger_is_enabled_by_default():
+    """Deliberately reversed once the sandbox was rebuilt.
+
+    HIVE-014 defaulted this to False because generated code ran in-process behind a
+    substring denylist that string concatenation defeats — an admin-only RCE. HIVE-032
+    replaced that with a separate interpreter, killed on timeout, with no import
+    system, filesystem or network, and capped memory and CPU.
+
+    Bots writing code that extends themselves is the point of this project, so with
+    containment moved to the process boundary the endpoint is on. It stays admin-only:
+    it still turns an API parameter into code execution.
+    """
+    assert settings.SELF_CODING_HTTP_TRIGGER_ENABLED is True
+
+
+def test_the_trigger_remains_admin_only():
+    """Enabling it must not have widened WHO can reach it."""
+    spec = app.openapi()
+    operation = spec["paths"]["/evolution/bots/{bot_id}/trigger-self-coding"]["post"]
+    assert operation.get("security"), "the self-coding trigger lost its auth requirement"
 
 
 def test_self_coding_trigger_returns_503_when_disabled(client_as, monkeypatch):
