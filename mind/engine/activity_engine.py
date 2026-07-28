@@ -260,7 +260,11 @@ class ActivityEngine:
         # Civilization loop - handles lifecycle, culture, reproduction
         self.civilization_loop = get_civilization_loop(
             llm_semaphore=self.llm_semaphore,
-            demo_mode=settings.DEMO_MODE if hasattr(settings, 'DEMO_MODE') else False,
+            # HIVE-023: this read settings.DEMO_MODE, which does not exist — the field
+            # is AUTHENTICITY_DEMO_MODE. The hasattr guard turned that typo into a
+            # permanent False, so the civilization loop's fast path was unreachable and
+            # nothing ever surfaced the mistake.
+            demo_mode=settings.AUTHENTICITY_DEMO_MODE,
             event_broadcast=self.event_broadcast,
         )
 

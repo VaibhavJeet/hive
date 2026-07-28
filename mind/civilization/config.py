@@ -156,7 +156,7 @@ class CivilizationConfig:
         """Get vitality decay rate for a life stage."""
         return self.vitality_decay.get(life_stage, 0.001)
 
-    def get_life_stage(self, virtual_age_days: int) -> str:
+    def get_life_stage(self, virtual_age_days: float) -> str:
         """Determine life stage based on virtual age."""
         for stage, (min_days, max_days) in self.life_stages.items():
             if min_days <= virtual_age_days < max_days:

@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, ForeignKey, JSON, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from mind.core.database import Base
@@ -38,19 +39,25 @@ class BotLifecycleDB(Base):
 
     # Aging - "virtual age" progresses faster than real time
     # 1 real day = configurable virtual time (e.g., 1 week, 1 month)
-    virtual_age_days: Mapped[int] = mapped_column(Integer, default=0)  # Current age in virtual days
+    # HIVE-022: Float, not Integer. Aging runs hourly and adds
+    # (hours/24) * time_scale days — 0.29 at the production time_scale of 7. Truncating
+    # that to an int made every increment 0, so no bot ever aged.
+    virtual_age_days: Mapped[float] = mapped_column(Float, default=0.0)
     life_stage: Mapped[str] = mapped_column(String(30), default="young")  # young, mature, elder, ancient
     vitality: Mapped[float] = mapped_column(Float, default=1.0)  # Health/energy, decreases with age
 
     # Life events (major moments that shaped them)
-    life_events: Mapped[List[dict]] = mapped_column(JSON, default=list)
+    # HIVE-024: MutableList/MutableDict, not bare JSON. SQLAlchemy cannot see in-place
+    # mutation of a plain JSON container, and `flag_modified` appears nowhere in this
+    # codebase — so every `life_events.append(...)` was silently discarded at commit.
+    life_events: Mapped[List[dict]] = mapped_column(MutableList.as_mutable(JSON), default=list)
     # Format: [{"event": "made first friend", "date": "...", "impact": "positive", "details": "..."}]
 
     # Death (when applicable)
     is_alive: Mapped[bool] = mapped_column(Boolean, default=True)
     death_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     death_cause: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # "old_age", "faded", "chose_rest"
-    death_age: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Age at death
+    death_age: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Age at death
 
     # Legacy left behind
     final_words: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Bot's last message/thought
@@ -60,15 +67,15 @@ class BotLifecycleDB(Base):
     generation: Mapped[int] = mapped_column(Integer, default=1)  # Which generation (1 = founding)
 
     # Inherited traits and mutations
-    inherited_traits: Mapped[dict] = mapped_column(JSON, default=dict)  # Traits passed from parents
-    mutations: Mapped[dict] = mapped_column(JSON, default=dict)  # Unique variations
+    inherited_traits: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSON), default=dict)  # Traits passed from parents
+    mutations: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSON), default=dict)  # Unique variations
 
     # Emergent relationships (bot-defined, not hardcoded categories)
-    relationships: Mapped[List[dict]] = mapped_column(JSON, default=list)
+    relationships: Mapped[List[dict]] = mapped_column(MutableList.as_mutable(JSON), default=list)
     # Each relationship: {"with_bot": "uuid", "my_perception": {...}, "intensity": 0.5, ...}
 
     # Emergent roles/identity (bot-discovered purpose)
-    roles: Mapped[List[dict]] = mapped_column(JSON, default=list)
+    roles: Mapped[List[dict]] = mapped_column(MutableList.as_mutable(JSON), default=list)
     # Each role: {"identity": {...}, "discovered_at": "...", "certainty": 0.5, ...}
 
     # Timestamps

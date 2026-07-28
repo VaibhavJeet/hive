@@ -107,7 +107,7 @@ class LifecycleManager:
                 birth_date=datetime.utcnow(),
                 birth_generation=generation,
                 birth_era=self._current_era,
-                virtual_age_days=0,
+                virtual_age_days=0.0,
                 life_stage="young",
                 vitality=1.0,
                 life_events=[{
@@ -168,7 +168,7 @@ class LifecycleManager:
             for lifecycle in lifecycles:
                 # Update age
                 old_stage = lifecycle.life_stage
-                lifecycle.virtual_age_days += int(virtual_days)
+                lifecycle.virtual_age_days += virtual_days
                 lifecycle.last_aged = datetime.utcnow()
 
                 # Update life stage using config
@@ -179,7 +179,7 @@ class LifecycleManager:
                         "event": f"entered_{new_stage}_stage",
                         "date": datetime.utcnow().isoformat(),
                         "impact": "milestone",
-                        "details": f"Transitioned to {new_stage} after {lifecycle.virtual_age_days} days"
+                        "details": f"Transitioned to {new_stage} after {lifecycle.virtual_age_days:.1f} days"
                     })
                     stats["stage_changed"] += 1
                     logger.info(f"[LIFECYCLE] Bot {lifecycle.bot_id} entered {new_stage} stage")
@@ -199,7 +199,7 @@ class LifecycleManager:
 
         return stats
 
-    async def _determine_life_stage(self, virtual_age_days: int) -> str:
+    async def _determine_life_stage(self, virtual_age_days: float) -> str:
         """Determine life stage based on virtual age."""
         config = await self._get_config()
         return config.get_life_stage(virtual_age_days)
@@ -257,7 +257,7 @@ class LifecycleManager:
             "event": "death",
             "date": datetime.utcnow().isoformat(),
             "impact": "final",
-            "details": f"Passed on after {lifecycle.virtual_age_days} virtual days. Cause: {cause}"
+            "details": f"Passed on after {lifecycle.virtual_age_days:.1f} virtual days. Cause: {cause}"
         })
 
         # Update the bot profile to mark as retired
@@ -290,13 +290,13 @@ class LifecycleManager:
             total_memories=total_memories,
             active_days=lifecycle.virtual_age_days,
             archived_data_id=None,  # Will be set by legacy system if archived
-            notes=f"Died of {cause} after {lifecycle.virtual_age_days} virtual days. Final words: {lifecycle.final_words}"
+            notes=f"Died of {cause} after {lifecycle.virtual_age_days:.1f} virtual days. Final words: {lifecycle.final_words}"
         )
         session.add(retired_record)
 
         logger.info(
             f"[LIFECYCLE] Bot {lifecycle.bot_id} has died. "
-            f"Age: {lifecycle.virtual_age_days} days, Cause: {cause}, "
+            f"Age: {lifecycle.virtual_age_days:.1f} days, Cause: {cause}, "
             f"Legacy impact: {lifecycle.legacy_impact:.2f}"
         )
 
@@ -372,7 +372,7 @@ class LifecycleManager:
                     "event": "loss",
                     "date": datetime.utcnow().isoformat(),
                     "impact": event_impact,
-                    "details": f"Lost {bot_name}, who passed away after {lifecycle.virtual_age_days} virtual days."
+                    "details": f"Lost {bot_name}, who passed away after {lifecycle.virtual_age_days:.1f} virtual days."
                 })
 
             if grieving_bots:
