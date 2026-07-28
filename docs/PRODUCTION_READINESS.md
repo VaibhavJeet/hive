@@ -831,37 +831,6 @@ tsquery.
 >   the form that appends safely; the `Annotated` alias is for hand-written signatures where
 >   it can go first.
 
-### HIVE-139 · P1 · The full-text search index is never populated
-`mind/core/database.py:110,458` declare `search_vector` TSVECTOR columns on `bot_profiles` and
-`posts`, and the initial migration creates **GIN indexes** on both. Nothing ever writes them.
-
-- `mind/search/indexer.py` has the code to populate them — and is **never called**. It is imported
-  only by `mind/search/__init__.py` (one of the effectively-dead modules from the original audit).
-- Its own docstring (`indexer.py:29`) claims *"The search_vector columns are automatically updated
-  via database triggers"*. **No trigger exists** — `grep TRIGGER alembic/versions/` returns nothing.
-
-So `search_vector` is permanently NULL, and every query runs
-`COALESCE(p.search_vector, to_tsvector('english', p.content))` — computing a tsvector **per row**,
-over the whole table, with the GIN index unusable. The indexes cost write throughput and disk while
-providing nothing.
-
-**Fix:** add a trigger (or a generated column) that maintains `search_vector` on insert/update,
-backfill existing rows, then drop the `COALESCE` fallback so a regression fails loudly instead of
-silently degrading to a scan. Delete `indexer.py` or wire it up — do not leave a third option.
-**AC:** `EXPLAIN` on a post search shows an index scan; the `COALESCE` fallback is gone.
-
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-016 ✅ · **Blocks:** —
-> **Blockers:** _none recorded_
-> **Feedback:**
-> - _28-07-2026_ — Found during HIVE-016. Gating search bounds *who* can trigger the scan; it does
->   not stop it being a scan.
-> - **The `COALESCE` is what hid this.** Search works correctly, so nothing looks broken — it is
->   merely O(table) per query. A missing index that produced wrong answers would have been found in
->   March; one that produces right answers slowly survived a "100% complete" sign-off.
-> - **Needs a migration**, so fold in the partial unique index deferred from HIVE-008
->   (`(bot_id, reporter_id) WHERE status = 'pending'`) rather than raising two.
-
 ### HIVE-017 · P0 · Authenticate the user WebSocket
 `mind/api/main.py:934-1047` — `/ws/{client_id}` accepts any `client_id` with no handshake auth, then
 `register_user` (:951, :1033) trusts a `user_id` sent in the message body. Any client can subscribe
@@ -1829,6 +1798,37 @@ plus API traffic. No statement timeout, no `pool_pre_ping` verified.
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
+
+### HIVE-139 · P1 · The full-text search index is never populated
+`mind/core/database.py:110,458` declare `search_vector` TSVECTOR columns on `bot_profiles` and
+`posts`, and the initial migration creates **GIN indexes** on both. Nothing ever writes them.
+
+- `mind/search/indexer.py` has the code to populate them — and is **never called**. It is imported
+  only by `mind/search/__init__.py` (one of the effectively-dead modules from the original audit).
+- Its own docstring (`indexer.py:29`) claims *"The search_vector columns are automatically updated
+  via database triggers"*. **No trigger exists** — `grep TRIGGER alembic/versions/` returns nothing.
+
+So `search_vector` is permanently NULL, and every query runs
+`COALESCE(p.search_vector, to_tsvector('english', p.content))` — computing a tsvector **per row**,
+over the whole table, with the GIN index unusable. The indexes cost write throughput and disk while
+providing nothing.
+
+**Fix:** add a trigger (or a generated column) that maintains `search_vector` on insert/update,
+backfill existing rows, then drop the `COALESCE` fallback so a regression fails loudly instead of
+silently degrading to a scan. Delete `indexer.py` or wire it up — do not leave a third option.
+**AC:** `EXPLAIN` on a post search shows an index scan; the `COALESCE` fallback is gone.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-016 ✅ · **Blocks:** —
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-016. Gating search bounds *who* can trigger the scan; it does
+>   not stop it being a scan.
+> - **The `COALESCE` is what hid this.** Search works correctly, so nothing looks broken — it is
+>   merely O(table) per query. A missing index that produced wrong answers would have been found in
+>   March; one that produces right answers slowly survived a "100% complete" sign-off.
+> - **Needs a migration**, so fold in the partial unique index deferred from HIVE-008
+>   (`(bot_id, reporter_id) WHERE status = 'pending'`) rather than raising two.
 
 ### HIVE-089 · P2 · pgvector index strategy unverified
 `memory_items` uses 768-dim embeddings with similarity search (`memory_core.py:334`). Confirm an

@@ -5,9 +5,8 @@
  * so `npm run build` failed at the root layout (see HIVE-131). This is the missing
  * implementation, written against the backend contract in `mind/api/main.py`.
  *
- * Identity comes from the session (HIVE-002), never from a hardcoded UUID.
- * The `auth` frame is the backend's current scheme; HIVE-017 replaces it with a token
- * handshake, at which point `connect()` should send the access token instead of the id.
+ * Identity comes from the session (HIVE-002), never from a hardcoded UUID, and is
+ * established by the handshake token (HIVE-017) rather than by a frame the client sends.
  */
 
 import { getAccessToken, getSessionUser } from './auth'
@@ -167,15 +166,20 @@ export class WebSocketManager {
       }
 
       try {
-        const socket = new WebSocket(`${WS_BASE_URL}/ws/${resolvedId}`)
+        // HIVE-017: the handshake now requires a token. Browsers cannot set headers
+        // on a WebSocket upgrade, so it goes in the query string.
+        const token = getAccessToken()
+        const socket = new WebSocket(
+          `${WS_BASE_URL}/ws/${resolvedId}?token=${encodeURIComponent(token ?? '')}`
+        )
         this.socket = socket
 
         socket.onopen = () => {
           this.reconnectAttempts = 0
           this.setStatus('connected')
-          // Identify this connection so the backend routes notifications to it.
-          // HIVE-017: replace with a token frame once the server verifies one.
-          this.send({ type: 'auth', user_id: resolvedId })
+          // HIVE-017: identity is established by the handshake token. This frame is
+          // kept only so the server confirms which user it resolved.
+          this.send({ type: 'auth' })
           this.startHeartbeat()
           settle()
         }

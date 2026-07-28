@@ -59,7 +59,7 @@ from mind.api.routes.metrics import router as metrics_router
 from mind.notifications.notification_service import get_notification_service
 from mind.notifications.push_service import get_push_service
 from mind.api.dependencies import get_current_user
-from mind.core.auth import AuthenticatedUser
+from mind.core.auth import AuthenticatedUser, verify_access_token
 from mind.monitoring.middleware import MetricsMiddleware
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -972,13 +972,69 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+# ============================================================================
+# WEBSOCKET AUTHENTICATION (HIVE-017, HIVE-018)
+# ============================================================================
+#
+# Browsers cannot set headers on a WebSocket handshake, so the access token is passed
+# as a query parameter. That is the standard workaround; the cost is that the token can
+# appear in access logs, so keep WS access logging off or scrub the query string.
+#
+# Before this, /ws/{client_id} accepted any client_id with no handshake check and then
+# trusted a `user_id` sent inside the message body — so a client could subscribe to
+# anyone's notification stream and post DMs and chat messages as anyone.
+
+
+async def _authenticate_socket(websocket: WebSocket) -> Optional[AppUserDB]:
+    """Resolve the caller from `?token=`, or close the socket and return None.
+
+    Close codes are in the private 4000-4999 range: 4401 unauthenticated,
+    4403 unauthorised.
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Authentication required")
+        return None
+
+    token_data = verify_access_token(token)
+    if token_data is None or token_data.user_id is None:
+        await websocket.close(code=4401, reason="Invalid or expired token")
+        return None
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(AppUserDB).where(AppUserDB.id == token_data.user_id)
+        )
+        user = result.scalar_one_or_none()
+
+    if user is None or getattr(user, "is_banned", False):
+        await websocket.close(code=4401, reason="Authentication failed")
+        return None
+
+    return user
+
+
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     """
     WebSocket endpoint for real-time updates.
     Receives all activity engine events: posts, likes, comments, chat messages, notifications.
+
+    Requires `?token=<access_token>`. The authenticated user is the actor for every
+    frame — `user_id` in a message body is ignored (HIVE-017), the same rule HIVE-003
+    applied to the REST surface.
     """
-    await manager.connect(websocket, client_id)
+    await websocket.accept()
+
+    user = await _authenticate_socket(websocket)
+    if user is None:
+        return
+
+    authenticated_user_id = user.id
+
+    # Registered from the token, not from a client-supplied frame.
+    manager.active_connections[client_id] = websocket
+    manager.register_user(client_id, str(authenticated_user_id))
 
     try:
         while True:
@@ -986,19 +1042,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             msg_type = data.get("type")
 
             if msg_type == "auth":
-                # Authenticate user for notifications
-                user_id = data.get("user_id")
-                if user_id:
-                    manager.register_user(client_id, user_id)
-                    await manager.send_message(client_id, {
-                        "type": "authenticated",
-                        "user_id": user_id
-                    })
+                # Retained for client compatibility. The session is already established
+                # from the handshake token; any user_id in the frame is ignored.
+                await manager.send_message(client_id, {
+                    "type": "authenticated",
+                    "user_id": str(authenticated_user_id)
+                })
 
             elif msg_type == "dm":
                 # User sending a DM to a bot
                 bot_id = UUID(data["bot_id"])
-                user_id = UUID(data["user_id"])
+                user_id = authenticated_user_id
                 content = data["content"]
 
                 # Send typing indicator
@@ -1022,7 +1076,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 from mind.core.database import CommunityChatMessageDB, AppUserDB
 
                 community_id = UUID(data["community_id"])
-                user_id = UUID(data["user_id"])
+                user_id = authenticated_user_id
                 content = data["content"]
                 reply_to_id = UUID(data["reply_to_id"]) if data.get("reply_to_id") else None
 
@@ -1068,18 +1122,17 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 })
 
             elif msg_type == "subscribe_notifications":
-                # Subscribe to user notifications
-                user_id = data.get("user_id")
-                if user_id:
-                    manager.register_user(client_id, user_id)
-                    # Send current unread count
-                    notification_service = get_notification_service()
-                    unread_count = await notification_service.get_unread_count(UUID(user_id))
-                    await manager.send_message(client_id, {
-                        "type": "notification_subscribed",
-                        "user_id": user_id,
-                        "unread_count": unread_count
-                    })
+                # Always the authenticated user — a client cannot subscribe to someone
+                # else's notification stream by naming them in the frame.
+                notification_service = get_notification_service()
+                unread_count = await notification_service.get_unread_count(
+                    authenticated_user_id
+                )
+                await manager.send_message(client_id, {
+                    "type": "notification_subscribed",
+                    "user_id": str(authenticated_user_id),
+                    "unread_count": unread_count
+                })
 
             elif msg_type == "ping":
                 await manager.send_message(client_id, {"type": "pong"})
@@ -1197,26 +1250,21 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
     Admin WebSocket endpoint for real-time dashboard updates.
     Receives system events, bot activity, logs, and health metrics.
     """
-    from mind.core.database import AppUserDB
-
     # Accept connection first to avoid browser timeout
     await websocket.accept()
 
-    # Verify admin user
-    try:
-        admin_uuid = UUID(admin_id)
-        async with async_session_factory() as session:
-            stmt = select(AppUserDB).where(AppUserDB.id == admin_uuid)
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-
-            if not user or not user.is_admin:
-                await websocket.close(code=4003, reason="Admin access required")
-                return
-    except Exception as e:
-        logger.error(f"Admin WebSocket auth error: {e}")
-        await websocket.close(code=4001, reason="Authentication failed")
+    # HIVE-018: `admin_id` came from the URL path and was merely looked up — knowing an
+    # admin's UUID was the whole credential, exactly as in HIVE-001. Identity now comes
+    # from the handshake token; the path segment is only a connection label.
+    user = await _authenticate_socket(websocket)
+    if user is None:
         return
+
+    if not user.is_admin:
+        await websocket.close(code=4403, reason="Admin access required")
+        return
+
+    admin_id = str(user.id)
 
     # Register connection (already accepted above)
     admin_manager.admin_connections[admin_id] = websocket
