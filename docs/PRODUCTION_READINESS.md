@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 27 (HIVE-001…018, 028, 029, 068, 125, 129, 131, 133, 135, 138)
+**Counts:** 139 tasks — 28 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 30 (HIVE-001…021, 028, 029, 068, 125, 129, 131, 133, 135, 138)  ·  **Epic A (auth): COMPLETE — 21/21**
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -896,20 +896,39 @@ with `allow_credentials=True` — a combination browsers reject and that signals
 exercised.
 **Fix:** fail startup if `ENVIRONMENT=production` and `CORS_ORIGINS == "*"`.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-021 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-021 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** A production boot with `CORS_ORIGINS="*"` now raises.
+> - **The check already existed — at the wrong severity.** It was rated `HIGH`, and
+>   `raise_on_critical=True` only stops on `CRITICAL`, so it would have logged a warning and let
+>   the boot proceed. Raised to `CRITICAL` because `main.py` mounts `CORSMiddleware` with
+>   `allow_credentials=True` **unconditionally**: `*` plus credentials is a combination browsers
+>   reject outright, so this is not merely permissive — it is a configuration that **cannot work
+>   and cannot be safe**. A warning is the wrong response to something that is broken either way.
+> - **Severity ratings are load-bearing**, which is easy to forget. Six issues in `production.py`
+>   are CRITICAL and the rest are advisory; anything mis-rated is silently non-blocking. Worth a
+>   pass over the other HIGH entries asking whether they should stop a boot.
 
 ### HIVE-020 · P0 · Fail startup on a default JWT secret
 `mind/config/settings.py:247` defaults `JWT_SECRET_KEY="your-super-secret-key-change-in-production"`.
 The guard that catches this (`validate_config_on_startup`, `settings.py:737`) is **never called** — see
 HIVE-021.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-021 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-021 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Booting with `ENVIRONMENT=production` and the placeholder secret now
+>   raises from **both** validators — `settings.validate_config_on_startup` and
+>   `production.validate_on_startup` check it independently.
+> - **No code change was needed.** The check was already written, already CRITICAL, and already
+>   correct. It simply never ran. That is the entire finding: this task was 100% a wiring
+>   problem, which is why it closed with HIVE-021 rather than on its own.
+> - ⚠️ **Still your action, from HIVE-002:** the admin UUID leaked in git history. If the default
+>   JWT secret was ever used in a deployed environment, every token signed with it is forgeable —
+>   rotate the secret as well as the account.
 
 ### HIVE-021 · P0 · Actually call the startup validators
 `mind/config/settings.py:737` `validate_config_on_startup()` and the entire 602-line
@@ -918,10 +937,27 @@ HIVE-021.
 **Fix:** call both at the top of the `lifespan` handler; abort startup on failure.
 **AC:** booting with `ENVIRONMENT=production` and a default JWT secret exits non-zero with a clear message.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** — · **Blocks:** HIVE-019, HIVE-020, HIVE-038, HIVE-060
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-019 ✅, HIVE-020 ✅, HIVE-038, HIVE-060
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** 11 tests; 4 fail when the fixes are reverted.
+> - **This closed three tasks with one wiring change**, and that is the finding rather than an
+>   efficiency note. HIVE-019 and HIVE-020 were both *already implemented* inside a validator
+>   nothing invoked. **The repo's production-safety posture was entirely notional** — 602 lines
+>   of `production.py` describing exactly what must not ship, executing never.
+> - **Ordering is asserted, not just presence.** The validators run before `init_database()`, the
+>   LLM client, the scheduler and the activity engine. A test compares their positions in the
+>   `lifespan` source, so a later refactor cannot quietly move them after the expensive startup
+>   they exist to prevent.
+> - **They raise rather than warn.** For a config error there is no useful degraded mode: serving
+>   traffic with a placeholder signing key is worse than not serving at all.
+> - **Development is deliberately untouched**, with a test proving it. Insecure defaults must stay
+>   usable locally or people will disable the validator — the failure mode where a safety check
+>   is too aggressive and gets switched off is worse than one that is slightly too lax.
+> - **This also closes HIVE-038's premise** (`production.py` unreachable). It is now reachable;
+>   what remains there is verifying its checks are *right*, which is a smaller job than the
+>   entry described.
 
 ---
 
