@@ -6,6 +6,14 @@
 // API Configuration
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Imported after API_BASE_URL: `auth` reads it from this module.
+import {
+  getAccessToken,
+  refreshAccessToken,
+  clearSession,
+  redirectToLogin,
+} from './auth';
+
 // Types matching backend response models
 export interface DashboardStats {
   total_users: number;
@@ -376,31 +384,40 @@ export class APIError extends Error {
   }
 }
 
-// Generic fetch wrapper with error handling
+// Generic fetch wrapper with error handling.
+//
+// Auth: JWT bearer from the session (HIVE-001/HIVE-002). On a 401 the access token is
+// refreshed once and the request retried; if the refresh also fails, the session is
+// cleared and the user is sent to /login.
 async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...options.headers,
+  const send = async (token: string | null): Promise<Response> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> | undefined),
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return fetch(url, { ...options, headers });
   };
 
-  // Add admin auth header for development
-  // In production, this should come from a proper auth system
-  if (typeof window !== 'undefined') {
-    const adminUserId = localStorage.getItem('admin_user_id');
-    if (adminUserId) {
-      (headers as Record<string, string>)['X-User-ID'] = adminUserId;
+  let response = await send(getAccessToken());
+
+  if (response.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      response = await send(refreshed);
+    }
+    if (response.status === 401) {
+      clearSession();
+      redirectToLogin();
     }
   }
-
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
 
   if (!response.ok) {
     let errorData;
