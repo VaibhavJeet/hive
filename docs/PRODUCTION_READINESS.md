@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 19 (HIVE-001…011, 028, 029, 068, 125, 129, 131, 133, 135)
+**Counts:** 137 tasks — 26 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 20 (HIVE-001…012, 028, 029, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -610,10 +610,75 @@ escape the media directory.
 ### HIVE-012 · P0 · Add auth to the `users` router (6 endpoints)
 `mind/api/routes/users.py` — 0 auth dependencies. Profile mutation for arbitrary user IDs.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** `device_id` never appears in a public response; profile reads require a session;
+registration and bot browsing stay open.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-137
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Users is **2 required / 4 open**; the four open are registration and
+>   bot/community browsing, which are public by design and asserted so they cannot regress.
+> - 🚨 **`device_id` was a bearer credential, published anonymously.** The chain matters more
+>   than any single endpoint: `POST /users/register` returns the **existing** account when
+>   handed a `device_id` it already knows — that is the mobile app's whole login mechanism —
+>   and `GET /users/{user_id}` was anonymous and **returned that device_id**. Read it, replay
+>   it, receive the account.
+> - **Neither endpoint is wrong on its own**, which is why this survived review. Device-keyed
+>   identity is a legitimate pattern for an app with no signup screen; echoing a user's own
+>   profile is legitimate too. The vulnerability lives in the *pair*. Worth remembering for
+>   the remaining routers: read endpoints need auditing for what they emit, not only for who
+>   may call them.
+> - 🔴 **The bigger finding is architectural: Hive has two parallel account systems.**
+>   `/auth/register` (email + password → JWT) and `/users/register` (device_id, no secret).
+>   `auth.py:218` even fabricates a `device_id` per JWT user "for compatibility". One of these
+>   should not exist. Filed as **[HIVE-137](#hive-137--p1--two-parallel-account-systems)** —
+>   and the answer depends on **HIVE-119**, since a pure observation product may not need
+>   human accounts at all.
+> - **Left `/users/register` working.** `cell/lib/services/api_service.dart:66` depends on it,
+>   and breaking the mobile app to close a leak that is already closed by removing `device_id`
+>   from public views would be the wrong trade.
+> - 🪤 **Found while reading the client: the mobile profile editor calls an endpoint that does
+>   not exist.** `api_service.dart:101,121` PUT to `/users/{id}/profile`; the router has no
+>   such route (only `/users/{user_id}`). Profile editing and avatar upload have never worked.
+>   Same family as HIVE-133/135 — filed as part of HIVE-137's client audit.
+> - **Tests assert on the published OpenAPI schema**, not only the Pydantic model, so the
+>   contract cannot drift back through a response_model change.
+
+### HIVE-137 · P1 · Two parallel account systems
+Hive has two unrelated ways to be a user:
+
+| Path | Credential | Result |
+|---|---|---|
+| `POST /auth/register` + `/auth/login` | email + password | JWT access/refresh pair |
+| `POST /users/register` | `device_id` only, no secret | returns the **existing** account for a known `device_id` |
+
+The second is what `cell/` uses (`api_service.dart:66`). `mind/api/routes/auth.py:218` fabricates a
+`device_id` for every JWT user *"for compatibility"*, so every account exists in both systems at
+once. Since HIVE-003 the API authenticates with JWTs, which means the device path can create an
+account it cannot then use — and HIVE-012 had to strip `device_id` from public responses precisely
+because that path treats it as a credential.
+
+**Also in scope — the mobile client calls endpoints that do not exist.** Found while auditing this:
+`cell/lib/services/api_service.dart:101,121` PUT to `/users/{id}/profile`, which the router does not
+define. **Profile editing and avatar upload have never worked**, despite
+[TODO.md](TODO.md) listing "Profile editing completion" as complete. Same family as HIVE-133/135:
+nobody noticed because no test exercises the client's URL list against the server's route table.
+
+**Fix:** decide which identity model survives (this follows from **HIVE-119**), migrate `cell/` onto
+it, delete the other, then audit every URL in `api_service.dart` against the live route table.
+**AC:** one account system; `cell/` authenticates through it; a test asserts every endpoint the
+mobile client calls exists on the server.
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-119, HIVE-012 ✅ · **Blocks:** HIVE-084
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found during HIVE-012. The security consequence is already closed (HIVE-012);
+>   what remains is the architectural duplication and the dead client calls.
+> - **The client-vs-route-table test is the cheap win here** and worth doing even before the identity
+>   decision: extract the URL templates from `api_service.dart`, compare against `app.openapi()`, fail
+>   on any the server does not serve. That single test would have caught this, HIVE-133, and HIVE-135.
 
 ### HIVE-013 · P0 · Gate the 28 mutating civilization endpoints
 `mind/api/routes/civilization.py` — 85 endpoints, 0 auth dependencies, 28 of them POST/PUT/DELETE:
