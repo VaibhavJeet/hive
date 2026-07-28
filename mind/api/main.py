@@ -37,7 +37,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+import json
+
 from mind.config.settings import settings
+from mind.core.rate_limit import RateLimiter
 from sqlalchemy import select
 from mind.core.database import init_database, get_session, async_session_factory, AppUserDB
 from mind.core.llm_client import get_llm_client, get_cached_client
@@ -70,71 +73,56 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # ============================================================================
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple in-memory rate limiter."""
+    """Sliding-window rate limiter (HIVE-026).
 
-    def __init__(self, app, requests_per_minute: int = 60, burst_limit: int = 10):
+    The counting lives in `mind.core.rate_limit`, backed by Redis so the window is
+    shared across workers rather than per-process, with a bounded in-process fallback
+    when Redis is unavailable.
+    """
+
+    #: Paths that must answer even under load. `/health` in particular is a liveness
+    #: probe — throttling it would make an overloaded server look dead and get it
+    #: restarted, which is exactly the wrong response (see HIVE-135).
+    EXEMPT_PATHS = frozenset(
+        ["/docs", "/redoc", "/openapi.json", "/health", "/health/detailed"]
+    )
+
+    def __init__(self, app, requests_per_minute: int = 120, burst_limit: int = 20):
         super().__init__(app)
-        self.requests_per_minute = requests_per_minute
-        self.burst_limit = burst_limit
-        self.request_counts: Dict[str, List[float]] = defaultdict(list)
+        self.limiter = RateLimiter(
+            requests_per_minute=requests_per_minute, burst_limit=burst_limit
+        )
 
-    def _get_client_ip(self, request: Request) -> str:
-        """Get client IP from request."""
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+    def _identity(self, request: Request) -> str:
+        """Who to count against.
+
+        `X-Forwarded-For` is client-controlled unless a trusted proxy overwrites it, so
+        a spoofed header would let a caller reset their own budget. It is honoured only
+        when TRUSTED_PROXY_HEADERS is enabled — otherwise the peer address is used.
+        """
+        if settings.TRUSTED_PROXY_HEADERS:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
-    def _cleanup_old_requests(self, client_ip: str, window: float = 60.0):
-        """Remove requests older than the window."""
-        now = time.time()
-        self.request_counts[client_ip] = [
-            t for t in self.request_counts[client_ip]
-            if now - t < window
-        ]
-
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for docs and health endpoints
-        if request.url.path in ["/docs", "/redoc", "/openapi.json", "/health"]:
+        if request.url.path in self.EXEMPT_PATHS:
             return await call_next(request)
 
-        # Under test every request arrives from the same synthetic client, so the
-        # limiter accumulates across the whole session and starts returning 429 —
-        # making results depend on test order. Disable it rather than weaken the
-        # limits, which would leave production under-protected. See HIVE-026 for the
-        # real fix: a Redis-backed window that is neither per-process nor unbounded.
+        # Under test every request comes from the same synthetic client, so a shared
+        # window would make results depend on test order.
         if settings.ENVIRONMENT.lower() == "test":
             return await call_next(request)
 
-        client_ip = self._get_client_ip(request)
-        now = time.time()
-
-        # Cleanup old requests
-        self._cleanup_old_requests(client_ip)
-
-        # Check rate limit
-        recent_requests = len(self.request_counts[client_ip])
-
-        if recent_requests >= self.requests_per_minute:
+        allowed, reason, retry_after = await self.limiter.check(self._identity(request))
+        if not allowed:
             return Response(
-                content='{"detail": "Rate limit exceeded. Please try again later."}',
+                content=json.dumps({"detail": reason}),
                 status_code=429,
                 media_type="application/json",
-                headers={"Retry-After": "60"}
+                headers={"Retry-After": str(retry_after)},
             )
-
-        # Check burst limit (requests in last second)
-        burst_count = sum(1 for t in self.request_counts[client_ip] if now - t < 1.0)
-        if burst_count >= self.burst_limit:
-            return Response(
-                content='{"detail": "Too many requests. Please slow down."}',
-                status_code=429,
-                media_type="application/json",
-                headers={"Retry-After": "1"}
-            )
-
-        # Record this request
-        self.request_counts[client_ip].append(now)
 
         return await call_next(request)
 

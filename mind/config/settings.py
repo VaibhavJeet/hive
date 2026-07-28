@@ -239,6 +239,15 @@ class Settings(BaseSettings):
     # SECURITY
     # -------------------------------------------------------------------------
 
+    TRUSTED_PROXY_HEADERS: bool = Field(
+        default=False,
+        description=(
+            "Trust X-Forwarded-For for client identity (rate limiting). Enable only "
+            "when the app sits behind a proxy that overwrites the header — otherwise a "
+            "caller can spoof it and reset their own rate-limit budget."
+        ),
+    )
+
     CORS_ORIGINS: str = Field(
         default="*",
         description="Comma-separated list of allowed origins, or * for all"
