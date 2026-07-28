@@ -18,7 +18,9 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 133 tasks — 26 P0, 47 P1, 50 P2, 10 P3.  ·  **Done:** 8 (HIVE-001, 002, 003, 068, 125, 129, 131, 133)
+**Counts:** 133 tasks — 26 P0, 47 P1, 50 P2, 10 P3.  ·  **Done:** 9 (HIVE-001, 002, 003, 004, 068, 125, 129, 131, 133)
+
+**API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
 ## How to work this
 
@@ -222,7 +224,7 @@ parameters; an integration test proves user A cannot act as user B.
 >   failures, no regressions**.
 > - **Scope was 3× the task description.** It cited 5 sites; a systematic AST sweep of every route
 >   signature found **52**, of which **44 were actors** and 10 legitimate targets. Converted all 44
->   across 9 routers. Endpoints requiring auth went from **~35 to 98 of 252**.
+>   across 9 routers. Endpoints requiring auth went from **~35 to 93 of 255** (⚠️ originally reported here as 98 — corrected in HIVE-004's feedback; the old figure counted optional-auth routes).
 > - **`is_bot` was worse than the impersonation.** `like_post`, `create_comment`,
 >   `send_community_message`, `send_direct_message`, `create_story`, `mark_story_viewed` and
 >   `upload_media` all took a caller-supplied `is_bot`/`author_is_bot` flag — and the moderation
@@ -279,11 +281,40 @@ caller's blocked list.
 
 ### HIVE-004 · P0 · Add auth to the `feed` router (7 endpoints)
 `mind/api/routes/feed.py` — 0 auth dependencies. Post creation, likes, comments, deletion all open.
+**AC:** the feed router has zero endpoints reachable without authentication, except reads that are
+deliberately public.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Feed is now **4 required / 3 optional / 0 open**. HIVE-003 did six of the
+>   seven; this task closed the last one and built the measurement that proves it.
+> - **`GET /feed/posts/{post_id}/likers` was the straggler** and the right call was not obvious. It
+>   is a read, and the other feed reads are deliberately public — but it *enumerates user
+>   identities*, which the others do not. Closed it. If HIVE-119 lands on "observation-only", revisit:
+>   in a pure-observation product this might legitimately be public.
+> - ⚠️ **I have to correct a number I reported in HIVE-003.** I wrote "auth coverage went from ~35 to
+>   98 of 252". That counted any endpoint carrying an OpenAPI `security` entry — but `OptionalUser`
+>   adds one while still serving anonymous callers. The honest split is
+>   **93 required / 6 optional / 156 open of 255**. The direction was right, the figure was flattering.
+> - **`tests/api/test_auth_coverage.py` is the fix for that class of mistake.** It classifies every
+>   route by walking the actual dependency tree, and ratchets per router: coverage cannot silently
+>   regress, and it cannot silently *improve* either — closing a task fails the test until the
+>   baseline is lowered, so progress has to be recorded.
+> - 🪤 **Trap for anyone writing similar tooling.** This FastAPI version does **not** flatten
+>   `include_router` into `app.routes`; it inserts a `_IncludedRouter` wrapper holding the real
+>   router on `.original_router`. My first version walked `app.routes` and confidently reported
+>   **9 endpoints out of ~255** — a metric that wrong is worse than no metric. `_iter_api_routes`
+>   handles it.
+> - **The task's premise was partly wrong**, worth knowing before HIVE-119: it says "post creation …
+>   open", but **there is no post-creation or post-deletion endpoint in the feed router at all**.
+>   Humans cannot create posts over the API — only bots can, through the engine. Either a product gap
+>   or evidence the platform really is observation-only. **Another data point for HIVE-119.**
+> - **Remaining open surface, measured** (feeds HIVE-006…016): civilization 85, settings 13,
+>   evolution 8, moderation 8, platform 7, search 5, users 5, health 6 (intentional), auth 4
+>   (intentional), hashtags 3, media 3, stories 3, system 3, analytics 2. Run
+>   `pytest tests/api/test_auth_coverage.py -s` for the live table.
 
 ### HIVE-005 · P0 · Add auth to the `chat` router (5 endpoints)
 `mind/api/routes/chat.py` — 0 auth dependencies. Community chat and DM send/read fully open.
