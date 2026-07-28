@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 137 tasks — 26 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 20 (HIVE-001…012, 028, 029, 068, 125, 129, 131, 133, 135)
+**Counts:** 137 tasks — 26 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 21 (HIVE-001…013, 028, 029, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -654,10 +654,38 @@ Anonymous callers can rewrite civilization history and reset its configuration.
 intentional); require admin on every mutating route.
 **AC:** all 28 mutating routes return 401 unauthenticated; all 57 read routes remain public.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003 · **Blocks:** —
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅ · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Civilization is **28 required / 57 open**, exactly the split the
+>   task specified. The single largest unauthenticated surface in the codebase is closed.
+> - **The LLM endpoints are the part I would flag to an operator first.** Eleven of the 28
+>   (`create-artifact`, `reflect-on-*`, `origin-story`, `propose`, `declare`,
+>   `recognize-pattern`, …) invoke the model on demand. Anonymous access made them an
+>   **unmetered spend endpoint** — the worst shape of bug, because the cost lands on the
+>   operator while the damage lands on the simulation. Anyone could have run up an Ollama
+>   queue or, with a paid provider configured, a bill.
+> - **`PUT /civilization/config` and `/config/reset` were the most damaging.** Unlike
+>   HIVE-136's facade, this config is **real** — `mind/civilization/config.py` is DB-backed
+>   and read by the lifecycle manager, so an anonymous caller could change `time_scale`,
+>   vitality decay, and life-stage boundaries, or reset them all. That is direct control of
+>   the simulation the product exists to observe.
+> - **The test pins the rule by shape, not by listing paths.** Any new mutating endpoint
+>   inherits the requirement instead of quietly escaping it — which matters here more than
+>   anywhere else, because this router is 2,576 lines and grew to 85 endpoints without anyone
+>   noticing none of them were protected.
+> - **It also asserts the 57/28 counts.** Adding an endpoint fails the test until someone
+>   states which side of the line it belongs on. Given how this file got to 85 endpoints, an
+>   assertion that forces a decision is worth more than one that merely permits the status quo.
+> - **Reads deliberately stay anonymous**, and there is a test asserting so. Gating them would
+>   be the easy over-correction and would break both the portal and VISION.md's
+>   "observation over control". Six portal-facing read paths are spot-checked against a 401.
+> - **Mechanical note.** Patching 28 signatures by regex needed three attempts: my first
+>   signature-span detection was wrong, and the second produced `,,` on handlers whose
+>   parameter list already ended with a trailing comma. Both failed loudly at compile time —
+>   but it is a reminder that bulk-editing signatures wants an AST-derived span
+>   (`node.body[0].lineno`), not paren counting.
 
 ### HIVE-014 · P0 · Gate the `evolution` router (8 endpoints)
 `mind/api/routes/evolution.py` — 0 auth dependencies.
