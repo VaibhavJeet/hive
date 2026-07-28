@@ -335,10 +335,15 @@ def validate_production_config(raise_on_critical: bool = True) -> ValidationRepo
     # CORS Origins
     cors = settings.CORS_ORIGINS
     if cors == "*":
+        # HIVE-019: CRITICAL rather than HIGH. main.py mounts CORSMiddleware with
+        # allow_credentials=True unconditionally, and `*` + credentials is a
+        # combination browsers reject outright — so this is not merely permissive, it
+        # is a configuration that cannot work AND cannot be safe. Rated CRITICAL so
+        # raise_on_critical actually stops a production boot.
         report.add_issue(
-            level=SecurityLevel.HIGH,
+            level=SecurityLevel.CRITICAL,
             category="Security",
-            message="CORS allows all origins (*)",
+            message="CORS allows all origins (*) while credentials are enabled",
             variable="AIC_CORS_ORIGINS",
             recommendation="Restrict to specific domains: https://yourdomain.com"
         )

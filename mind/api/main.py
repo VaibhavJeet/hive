@@ -208,6 +208,18 @@ async def lifespan(app: FastAPI):
     # Startup
     print("Starting AI Community Companions...")
 
+    # HIVE-021: both validators existed and neither was ever called, so every
+    # production safety check this codebase already implements was dead code —
+    # including the default-JWT-secret check (HIVE-020) and the wildcard-CORS check
+    # (HIVE-019). They run first, before anything expensive is started, and they raise
+    # rather than warn: a misconfigured production boot should fail loudly at start,
+    # not serve traffic with a placeholder signing key.
+    from mind.config.production import validate_on_startup as validate_production
+    from mind.config.settings import validate_config_on_startup
+
+    validate_config_on_startup()
+    validate_production()
+
     # Initialize database
     await init_database()
     print("Database initialized")
