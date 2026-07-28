@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 15 (HIVE-001…009, 068, 125, 129, 131, 133, 135)
+**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 16 (HIVE-001…010, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -545,10 +545,40 @@ subscribe on their own behalf.
 ### HIVE-010 · P0 · Add auth to the `stories` router (7 endpoints)
 `mind/api/routes/stories.py` — 0 auth dependencies. Story creation, deletion, and view-tracking open.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** story mutations require auth; viewer lists and expired stories are visible only to
+the author; the public story feed keeps working.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Stories is **4 required / 3 optional / 0 open**. 9 tests, 4 of which
+>   fail against unpatched code.
+> - 🚨 **Viewer lists were world-readable.** `GET /stories/{id}/viewers` was anonymous and
+>   returned the identity of everyone who had viewed a story. That is a social-graph leak —
+>   it reveals **who is watching whom**, which is information no viewer consented to publish.
+> - **The check was already specified and simply never written.** The handler's docstring read
+>   *"Only the story author should typically have access to this."* Worth internalising: in this
+>   codebase, a docstring describing a security rule is **not evidence the rule is enforced**.
+>   The same pattern produced HIVE-133's dead route (`verify_admin` that verified nothing) and
+>   `blocking.py`'s `verify_user_exists`. When auditing the remaining routers, grep for prose
+>   like "only", "must be", "admin only" and check each one has code behind it.
+> - 🚨 **Expired stories were retrievable forever**, by anyone, via `include_expired=true` or a
+>   direct `GET /stories/{id}`. Ephemerality is the *entire* distinguishing property of a story
+>   — without it this is just a post with extra steps. Users posted under a promise the API did
+>   not keep. Expired stories are now author-only.
+> - **Deliberate design choices**, both worth keeping if this code is revisited: non-authors get
+>   **404 rather than 403**, so the status code does not confirm a story exists; and
+>   `include_expired` is silently downgraded for non-authors rather than rejected, so existing
+>   clients keep working instead of breaking on a 403.
+> - **Fixed a real defect in the auth layer while testing.** `get_optional_user` opened its own
+>   session via `async_session_factory()` instead of using the injected `get_db_session`, unlike
+>   `get_current_user`. That meant **a second DB connection per request, outside the request's
+>   transaction**, on every optional-auth endpoint — and it made the dependency impossible to
+>   override in tests, which is how the tests found it. Now consistent.
+> - **The coverage ratchet did its job.** Closing these dropped stories from 3 open to 0 and the
+>   ratchet test failed until I lowered the baseline — forcing the improvement to be recorded
+>   rather than silently absorbed. That is the behaviour it was built for.
 
 ### HIVE-011 · P0 · Add auth + quotas to the `media` router (5 endpoints)
 `mind/api/routes/media.py` — 0 auth dependencies. Anonymous file upload to your disk/bucket is an
