@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 16 (HIVE-001…010, 068, 125, 129, 131, 133, 135)
+**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 19 (HIVE-001…011, 028, 029, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -584,10 +584,28 @@ the author; the public story feed keeps working.
 `mind/api/routes/media.py` — 0 auth dependencies. Anonymous file upload to your disk/bucket is an
 unbounded storage and cost DoS.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** HIVE-029
+**AC:** upload and delete require auth; one account cannot exhaust storage; file serving cannot
+escape the media directory.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-097
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Media is **2 required / 3 open**; the three open ones are public file
+>   serving and metadata, which is correct — media is embedded in public posts.
+> - **Closed together with [HIVE-028](#hive-028--p1--path-traversal-exposure-in-media-file-serving)
+>   and [HIVE-029](#hive-029--p1--media-uploads-trust-client-declared-content-type)**, deliberately.
+>   All three live in the same ~100 lines; doing them separately meant three reviews, three test
+>   files, and three chances to reintroduce one while fixing another.
+> - **Quotas: 100 files / 500 MB per uploader per rolling 24 hours.** Deliberately generous — the
+>   goal is to bound abuse, not ration normal use. Checked **before** the body is read, so a caller
+>   already over quota cannot make the server buffer a large upload just to be told no.
+> - **Numbers are hardcoded constants**, not settings, and that is a deliberate deferral: adding
+>   them to `mind/api/routes/settings.py` would put them in the store that **HIVE-136** shows is a
+>   facade. Move them into config when HIVE-136 lands, not before.
+> - **Not done: quota accounting is per-request, not atomic.** Two concurrent uploads can both pass
+>   the check and land the account slightly over. Acceptable for an abuse bound; if it ever needs
+>   to be exact, that is a Redis counter, not a bigger query.
 
 ### HIVE-012 · P0 · Add auth to the `users` router (6 endpoints)
 `mind/api/routes/users.py` — 0 auth dependencies. Profile mutation for arbitrary user IDs.
@@ -783,10 +801,25 @@ fine; at any real scale it is a long-held transaction and a memory spike.
 filenames containing separators.
 **AC:** a request for `..%2f..%2fetc%2fpasswd` returns 400/404, not file content.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** —
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Closed alongside HIVE-011/029. 6 of the 21 media tests fail when this
+>   fix alone is reverted.
+> - **Confirmed exploitable, and the mechanism is worth stating precisely:** Starlette matches path
+>   segments against the **raw** URL but hands the handler the **decoded** value. `%2e%2e%2f`
+>   therefore never looks like traversal to the router and arrives at the handler as `../`.
+>   Reviewing the route pattern alone would not reveal this.
+> - **The fix is stricter than the task asked for.** Containment is enforced against the *type*
+>   directory (`<root>/images`), not merely the storage root. Containing only to the root would
+>   still allow `images/../videos/x.mp4`, which stays inside storage but sidesteps the `file_type`
+>   allowlist. Filenames must also be plain names — **a filename is never a path**.
+> - **A test of mine was wrong first, and that is how the stronger rule was found.** I asserted that
+>   `images/../secret.txt` escapes; it does not — it resolves to `<root>/secret.txt`, still inside
+>   storage. Chasing that failure is what surfaced the sub-directory requirement. Worth the
+>   reminder that a failing test is sometimes the test being wrong, and investigating rather than
+>   adjusting the assertion is what pays.
 
 ### HIVE-029 · P1 · Media uploads trust client-declared content type
 `mind/api/routes/media.py:91` — `content_type = file.content_type or "application/octet-stream"`,
@@ -794,10 +827,27 @@ taken from the multipart header with no sniffing, and no enforcement of `MAX_IMA
 `ALLOWED_IMAGE_TYPES` visible on the request path.
 **Fix:** sniff magic bytes, enforce the configured size and type limits, re-encode images.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-011 · **Blocks:** HIVE-097
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-096, HIVE-097
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Closed alongside HIVE-011/028.
+> - **Two separate defects were hiding under one line.** (1) `UploadFile.content_type` comes from
+>   the client's multipart header, so arbitrary bytes could be stored as `image/png` and served
+>   back **from our own origin** under a MIME type of the uploader's choosing. (2) The size cap was
+>   applied with `len(content)` **after** `await file.read()` had pulled the entire body into
+>   memory — so the limit protected disk but not RAM, and a multi-gigabyte upload was an OOM before
+>   the 10 MB check ever ran. The second is arguably the more dangerous and was not in the task
+>   description.
+> - **Sniffing is hand-rolled in `mind/media/validation.py`**, not `python-magic`: that needs a
+>   native library and is painful to install on Windows, which is this project's dev platform.
+>   Signatures cover exactly the formats in `ALLOWED_IMAGE_TYPES` / `ALLOWED_VIDEO_TYPES`.
+> - **Two deliberate leniencies**, both tested so they cannot silently widen: `.mov` and `.mp4`
+>   share the ISO base media container and `ftyp` cannot tell them apart, so they are treated as
+>   equivalent; and RIFF is checked for the `WEBP` sub-type, since RIFF also covers `.wav`/`.avi`.
+> - **Note for HIVE-096/097.** Bot-generated images (HIVE-096) will pass through the engine, not
+>   this endpoint, so they bypass sniffing — fine, they are locally produced. Video processing
+>   (HIVE-097) will need its own validation for the extracted thumbnail.
 
 ### HIVE-030 · P1 · Sandbox timeout does not stop runaway code
 `mind/scaling/self_coding_sandbox.py:484-491` — `thread.join(timeout)` returns, but the daemon thread
