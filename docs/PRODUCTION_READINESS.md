@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 137 tasks — 26 P0, 50 P1, 51 P2, 10 P3.  ·  **Done:** 21 (HIVE-001…013, 028, 029, 068, 125, 129, 131, 133, 135)
+**Counts:** 137 tasks — 27 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 22 (HIVE-001…014, 028, 029, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -690,10 +690,43 @@ intentional); require admin on every mutating route.
 ### HIVE-014 · P0 · Gate the `evolution` router (8 endpoints)
 `mind/api/routes/evolution.py` — 0 auth dependencies.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** no evolution endpoint spends LLM tokens or executes code without an admin token.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-032
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Evolution is **4 required / 4 open**; the open four are
+>   bot-intelligence reads that back the portal.
+> - 🔴 **This router contained the single most severe defect found in the whole effort: an
+>   unauthenticated path from caller text to code execution.**
+>   ```
+>   POST /evolution/bots/{id}/trigger-self-coding?what_to_improve=<caller text>
+>     -> analyze_and_code(what_to_improve=...)
+>     -> interpolated verbatim into the code-generation prompt (bot_self_coding.py:226)
+>     -> LLM emits Python
+>     -> _validate_code(): substring denylist, defeated by string concatenation,
+>        with getattr() in its safe-builtins
+>     -> exec(code, sandbox_globals)   in the API process
+>   ```
+>   Every link was already documented separately — HIVE-032 described the sandbox, HIVE-014
+>   described the missing auth. **Neither entry noted that they connect.** The lesson is that
+>   a backlog of individually-rated findings systematically under-rates chains; it is worth
+>   one pass over the remaining items asking "what does this reach?"
+> - **Two layers of fix, deliberately.** Admin gating removes anonymous reachability. But an
+>   admin-only RCE is still an RCE and admin tokens leak, so the endpoint is *also* off
+>   unless `AIC_SELF_CODING_HTTP_TRIGGER_ENABLED=true`. The disabled check short-circuits
+>   before any DB or LLM work — asserted, so it cannot degrade into a late rejection.
+> - **Scope kept narrow on purpose.** Only the HTTP trigger is gated; the engine's internal
+>   self-coding loop is untouched. That loop is driven by bot cognition rather than caller
+>   input, so it is a different risk — real, but HIVE-032's, not this task's.
+> - ⚠️ **This does not fix the sandbox.** It closes the door in front of it. **HIVE-032 should
+>   now be treated as the top remaining security item**, and the kill switch should stay off
+>   until it lands.
+> - **`GET /evolution/github/status` gated too.** It reports whether a GitHub token is
+>   configured, which is reconnaissance rather than observation — and it pairs with
+>   HIVE-040's 596 lines of unreachable `bot_github.py`, which is where that token would be
+>   used if anything called it.
 
 ### HIVE-015 · P0 · Gate the `system` router (3 endpoints)
 `mind/api/routes/system.py` — 0 auth dependencies. `/system/status` exposes host CPU/memory/disk/network
@@ -931,7 +964,7 @@ the docstring.
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
 
-### HIVE-032 · P1 · The weaker of the two sandboxes is the one in use
+### HIVE-032 · ~~P1~~ **P0** · The weaker of the two sandboxes is the one in use
 `mind/engine/bot_self_coding.py:181` `exec()`s LLM-generated code guarded by a substring denylist,
 with `getattr` in its safe-builtins (`:118`). String concatenation defeats a substring denylist
 (`getattr((), "__cl"+"ass__")`), and the escape runs in-process with full privileges. Meanwhile the
@@ -940,9 +973,19 @@ stricter `mind/scaling/self_coding_sandbox.py` is imported by nothing but its ow
 hardened executor from HIVE-030/031.
 
 > **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-030, HIVE-031 · **Blocks:** HIVE-025
+> **Depends on:** HIVE-030, HIVE-031 · **Blocks:** HIVE-025, HIVE-014 ✅ (kill switch)
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - _28-07-2026_ — **Re-rated P1 → P0 during HIVE-014.** The sandbox is not a latent
+>   weakness: `POST /evolution/bots/{id}/trigger-self-coding` fed **caller-supplied text**
+>   straight into the prompt that generates the code this sandbox then `exec()`s. That
+>   made it a remote code execution path, reachable anonymously until HIVE-014.
+> - **Mitigated, not fixed.** The endpoint is now admin-only *and* disabled by default
+>   (`AIC_SELF_CODING_HTTP_TRIGGER_ENABLED`). **Leave that flag off until this task lands.**
+> - The engine's internal self-coding loop still runs generated code through the same
+>   `exec()`. Bot cognition is a less attacker-controlled input than an HTTP parameter,
+>   but it is LLM output executed in-process with `getattr` available — the loop should
+>   move to the hardened executor at the same time.
 
 ### HIVE-033 · P1 · `create_all()` competes with Alembic as schema authority
 `mind/core/database.py` `init_database()` runs `Base.metadata.create_all` on every startup, alongside
