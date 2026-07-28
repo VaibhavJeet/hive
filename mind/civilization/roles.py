@@ -16,6 +16,8 @@ import asyncio
 import logging
 import json
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -100,7 +102,7 @@ class EmergentRolesManager:
             # Store the identity discovery
             roles = lifecycle.roles or []
             roles.append({
-                "discovered_at": datetime.utcnow().isoformat(),
+                "discovered_at": utcnow().isoformat(),
                 "identity": reflection.get("identity", {}),
                 "reflection": reflection.get("reflection", ""),
                 "certainty": reflection.get("certainty", 0.5),
@@ -247,7 +249,7 @@ Respond in JSON:
             roles.append({
                 "type": "recognition_received",
                 "from": str(from_bot_id),
-                "date": datetime.utcnow().isoformat(),
+                "date": utcnow().isoformat(),
                 "recognition": recognition,
                 "my_response": response
             })

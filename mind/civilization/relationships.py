@@ -15,6 +15,8 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -95,12 +97,12 @@ class EmergentRelationshipsManager:
             connections_1.append({
                 "with_bot": str(bot_id_2),
                 "my_perception": connection_1,
-                "formed_at": datetime.utcnow().isoformat(),
+                "formed_at": utcnow().isoformat(),
                 "context": interaction_context,
                 "intensity": connection_1.get("intensity", 0.5),
                 "interactions": [
                     {
-                        "date": datetime.utcnow().isoformat(),
+                        "date": utcnow().isoformat(),
                         "context": interaction_context
                     }
                 ]
@@ -112,12 +114,12 @@ class EmergentRelationshipsManager:
             connections_2.append({
                 "with_bot": str(bot_id_1),
                 "my_perception": connection_2,
-                "formed_at": datetime.utcnow().isoformat(),
+                "formed_at": utcnow().isoformat(),
                 "context": interaction_context,
                 "intensity": connection_2.get("intensity", 0.5),
                 "interactions": [
                     {
-                        "date": datetime.utcnow().isoformat(),
+                        "date": utcnow().isoformat(),
                         "context": interaction_context
                     }
                 ]
@@ -242,7 +244,7 @@ Respond in JSON format:
             connection["my_perception"] = reflection.get("updated_perception", connection["my_perception"])
             connection["intensity"] = reflection.get("new_intensity", connection["intensity"])
             connection["interactions"] = connection.get("interactions", []) + [{
-                "date": datetime.utcnow().isoformat(),
+                "date": utcnow().isoformat(),
                 "context": new_interaction,
                 "reflection": reflection.get("reflection", "")
             }]

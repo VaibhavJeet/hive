@@ -5,6 +5,8 @@ Story Service - manages ephemeral stories with 24-hour expiration.
 import asyncio
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -109,7 +111,7 @@ class StoryService:
                 media_url=media_url,
                 background_color=background_color,
                 font_style=font_style,
-                expires_at=datetime.utcnow() + timedelta(hours=expires_hours),
+                expires_at=utcnow() + timedelta(hours=expires_hours),
             )
             session.add(story)
             await session.commit()
@@ -135,7 +137,7 @@ class StoryService:
         Returns:
             List of story dictionaries with author info
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         async with async_session_factory() as session:
             # Get active stories
@@ -209,7 +211,7 @@ class StoryService:
         Returns:
             List of story dictionaries
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         async with async_session_factory() as session:
             conditions = [
@@ -369,7 +371,7 @@ class StoryService:
         Returns:
             Number of stories cleaned up
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         async with async_session_factory() as session:
             # Find expired stories that aren't already deleted
@@ -403,7 +405,7 @@ class StoryService:
         Returns:
             Story dictionary or None if not found
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         async with async_session_factory() as session:
             stmt = select(StoryDB).where(

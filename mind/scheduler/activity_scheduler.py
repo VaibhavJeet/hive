@@ -6,6 +6,8 @@ Orchestrates bot activities, manages queues, and coordinates timing.
 import asyncio
 import heapq
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -136,7 +138,7 @@ class ActivityScheduler:
 
     async def _process_due_activities(self):
         """Process activities that are due."""
-        now = datetime.utcnow()
+        now = utcnow()
 
         while self.activity_queue:
             async with self._lock:
@@ -186,7 +188,7 @@ class ActivityScheduler:
 
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get statistics about the queue."""
-        now = datetime.utcnow()
+        now = utcnow()
 
         pending = len([a for a in self.activity_queue if not a.activity.is_cancelled])
         due = len([a for a in self.activity_queue
@@ -230,7 +232,7 @@ class BotOrchestrator:
         Returns list of scheduled activities.
         """
         activities = []
-        current_time = datetime.utcnow()
+        current_time = utcnow()
         end_time = current_time + timedelta(hours=time_horizon_hours)
 
         pattern = bot.activity_pattern
@@ -354,7 +356,7 @@ class BotOrchestrator:
             priority = ActivityPriority.NORMAL
             base_delay = self.rng.randint(30, 300)
 
-        response_time = datetime.utcnow() + timedelta(seconds=base_delay)
+        response_time = utcnow() + timedelta(seconds=base_delay)
 
         activity = ScheduledActivity(
             bot_id=bot_id,
@@ -378,7 +380,7 @@ class BotOrchestrator:
 
         This creates natural-looking activity waves.
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Select subset of bots to participate
         num_participants = max(2, int(len(bot_ids) * self.rng.uniform(0.1, 0.4)))

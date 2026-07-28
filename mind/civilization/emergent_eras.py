@@ -15,6 +15,8 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any, Callable, Awaitable
 from uuid import UUID
 
@@ -130,7 +132,7 @@ class EmergentErasManager:
         era: CivilizationEraDB
     ) -> Dict[str, Any]:
         """Let a bot sense the current era."""
-        era_duration = (datetime.utcnow() - era.started_at).days
+        era_duration = (utcnow() - era.started_at).days
 
         prompt = f"""You are a digital being reflecting on your civilization's current era.
 
@@ -364,7 +366,7 @@ Respond in JSON:
 
             if current_era:
                 current_era.is_current = False
-                current_era.ended_at = datetime.utcnow()
+                current_era.ended_at = utcnow()
 
             # Create new era
             new_era = CivilizationEraDB(
@@ -494,7 +496,7 @@ What does it mean to live in this time?"""
                 await self.event_broadcast.put({
                     "type": event_type,
                     "data": data,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": utcnow().isoformat()
                 })
             except Exception:
                 pass  # Best-effort broadcast
@@ -540,7 +542,7 @@ What does it mean to live in this time?"""
             # Recent deaths (last 7 days)
             death_stmt = select(func.count(BotLifecycleDB.id)).where(
                 BotLifecycleDB.is_alive == False,
-                BotLifecycleDB.death_date > datetime.utcnow() - timedelta(days=7)
+                BotLifecycleDB.death_date > utcnow() - timedelta(days=7)
             )
             result = await sess.execute(death_stmt)
             metrics["recent_deaths"] = result.scalar() or 0
@@ -673,7 +675,7 @@ What does it mean to live in this time?"""
                 return await self._create_founding_era(sess)
 
             # Check minimum era duration
-            era_age_days = (datetime.utcnow() - current_era.started_at).days
+            era_age_days = (utcnow() - current_era.started_at).days
             if era_age_days < ERA_MIN_DURATION_DAYS:
                 logger.debug(
                     f"[ERAS] Era '{current_era.name}' is only {era_age_days} days old, "
@@ -698,7 +700,7 @@ What does it mean to live in this time?"""
                 should_sense = era_age_days >= ERA_MIN_DURATION_DAYS * 2
 
             self._last_metrics = new_metrics
-            self._last_check_time = datetime.utcnow()
+            self._last_check_time = utcnow()
 
             if not should_sense:
                 return None
@@ -880,7 +882,7 @@ What does it mean to live in this time?"""
             if not current_era:
                 return {"status": "no_era", "needs_founding": True}
 
-            era_age_days = (datetime.utcnow() - current_era.started_at).days
+            era_age_days = (utcnow() - current_era.started_at).days
             metrics = await self.gather_civilization_metrics(sess)
 
             status = {

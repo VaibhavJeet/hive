@@ -4,6 +4,8 @@ Provides endpoints for reading and updating platform settings.
 """
 
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, Any
 from uuid import UUID, uuid4
 
@@ -112,7 +114,7 @@ _settings_store: Dict[str, Any] = {
     "auth": AuthSettings().model_dump(),
     "moderation": ModerationSettings().model_dump(),
     "notifications": NotificationSettings().model_dump(),
-    "updated_at": datetime.utcnow().isoformat(),
+    "updated_at": utcnow().isoformat(),
 }
 
 
@@ -141,7 +143,7 @@ def update_settings(updates: UpdateSettingsRequest) -> AllSettings:
     if updates.notifications:
         _settings_store["notifications"] = updates.notifications.model_dump()
 
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
 
     return get_all_settings()
 
@@ -155,7 +157,7 @@ def reset_settings() -> AllSettings:
         "auth": AuthSettings().model_dump(),
         "moderation": ModerationSettings().model_dump(),
         "notifications": NotificationSettings().model_dump(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": utcnow().isoformat(),
     }
     return get_all_settings()
 
@@ -214,7 +216,7 @@ async def update_general_settings(
 ):
     """Update general platform settings."""
     _settings_store["general"] = settings.model_dump()
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
     return settings
 
 
@@ -231,7 +233,7 @@ async def update_bot_settings(
 ):
     """Update bot configuration settings."""
     _settings_store["bot"] = settings.model_dump()
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
     return settings
 
 
@@ -248,7 +250,7 @@ async def update_auth_settings(
 ):
     """Update authentication settings."""
     _settings_store["auth"] = settings.model_dump()
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
     return settings
 
 
@@ -265,7 +267,7 @@ async def update_moderation_settings(
 ):
     """Update content moderation settings."""
     _settings_store["moderation"] = settings.model_dump()
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
     return settings
 
 
@@ -282,5 +284,5 @@ async def update_notification_settings(
 ):
     """Update notification settings."""
     _settings_store["notifications"] = settings.model_dump()
-    _settings_store["updated_at"] = datetime.utcnow().isoformat()
+    _settings_store["updated_at"] = utcnow().isoformat()
     return settings

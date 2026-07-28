@@ -10,6 +10,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -189,7 +191,7 @@ class ChatLoop(BaseLoop):
                     chat_activity_bonus = 0.0
                     if recent_msgs:
                         # Recent message = more likely to respond
-                        newest_msg_age = (datetime.utcnow() - recent_msgs[0].created_at).total_seconds()
+                        newest_msg_age = (utcnow() - recent_msgs[0].created_at).total_seconds()
                         if newest_msg_age < 300:  # Message in last 5 min
                             chat_activity_bonus = 0.3
                         elif newest_msg_age < 900:  # Message in last 15 min
@@ -236,7 +238,7 @@ class ChatLoop(BaseLoop):
                     last_chat = self.last_chat_time.get(bot.id)
                     min_interval = random.uniform(180, 300)  # 3-5 minutes
                     if last_chat:
-                        elapsed = (datetime.utcnow() - last_chat).total_seconds()
+                        elapsed = (utcnow() - last_chat).total_seconds()
                         if elapsed < self.authenticity_engine.scale_time(min_interval):
                             continue
 
@@ -423,7 +425,7 @@ Output ONLY your message (1-2 sentences max)."""
         await session.commit()
         await session.refresh(message)
 
-        self.last_chat_time[bot.id] = datetime.utcnow()
+        self.last_chat_time[bot.id] = utcnow()
 
         # Learn from this chat interaction
         if participant_names:

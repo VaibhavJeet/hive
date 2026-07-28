@@ -15,6 +15,8 @@ import logging
 import random
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -187,7 +189,7 @@ class EmergentCommunityManager:
                 active_result = await session.execute(active_comm_stmt)
                 for comm in active_result.scalars().all():
                     if comm.current_bot_count and comm.current_bot_count > 0:
-                        comm.last_activity_at = datetime.utcnow()
+                        comm.last_activity_at = utcnow()
 
             await session.commit()
 
@@ -216,7 +218,7 @@ class EmergentCommunityManager:
             for community in empty_communities:
                 # Check if community has been empty for a while (created > 1 day ago)
                 if community.created_at and \
-                   datetime.utcnow() - community.created_at > timedelta(days=1):
+                   utcnow() - community.created_at > timedelta(days=1):
                     # Archive the community
                     community.is_archived = True
                     logger.info(
@@ -229,7 +231,7 @@ class EmergentCommunityManager:
             stagnant_stmt = select(CommunityDB).where(
                 CommunityDB.is_archived == False,
                 CommunityDB.last_activity_at != None,
-                CommunityDB.last_activity_at < datetime.utcnow() - timedelta(days=7)
+                CommunityDB.last_activity_at < utcnow() - timedelta(days=7)
             )
             stagnant_result = await session.execute(stagnant_stmt)
             stagnant_communities = stagnant_result.scalars().all()
@@ -572,7 +574,7 @@ class EmergentCommunityManager:
             min_bots=3,
             max_bots=50,
             current_bot_count=len(founding_bot_ids),
-            last_activity_at=datetime.utcnow(),
+            last_activity_at=utcnow(),
         )
         session.add(community)
         await session.flush()  # Get the ID
@@ -653,7 +655,7 @@ class EmergentCommunityManager:
             community = result.scalar_one_or_none()
 
             if community and not community.is_archived:
-                community.last_activity_at = datetime.utcnow()
+                community.last_activity_at = utcnow()
                 # Boost activity level slightly (capped at 1.0)
                 community.activity_level = min(1.0, (community.activity_level or 0.5) + 0.05)
                 await session.commit()
@@ -693,7 +695,7 @@ class EmergentCommunityManager:
                 # Revive the community
                 community.is_archived = False
                 community.activity_level = 0.5
-                community.last_activity_at = datetime.utcnow()
+                community.last_activity_at = utcnow()
 
                 # Add interested bots as members
                 for bot_id in interested_bots[:10]:  # Cap at 10 initial members
@@ -743,7 +745,7 @@ class EmergentCommunityManager:
                 # Recency score (1.0 if active today, decays over 7 days)
                 recency_score = 1.0
                 if comm.last_activity_at:
-                    days_since = (datetime.utcnow() - comm.last_activity_at).days
+                    days_since = (utcnow() - comm.last_activity_at).days
                     recency_score = max(0.0, 1.0 - (days_since / 7.0))
 
                 health_score = (member_score * 0.3) + (activity_score * 0.4) + (recency_score * 0.3)

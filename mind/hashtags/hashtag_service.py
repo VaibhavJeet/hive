@@ -5,6 +5,8 @@ Provides hashtag management, trending analysis, and following functionality.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional
 from uuid import UUID
 
@@ -135,8 +137,8 @@ class HashtagService:
             List of TrendingHashtag objects sorted by popularity
         """
         async with async_session_factory() as session:
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-            recent_cutoff = datetime.utcnow() - timedelta(hours=1)
+            cutoff_time = utcnow() - timedelta(hours=hours)
+            recent_cutoff = utcnow() - timedelta(hours=1)
 
             # Get hashtag counts within time window
             stmt = (

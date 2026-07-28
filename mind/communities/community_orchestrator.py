@@ -5,6 +5,8 @@ Manages communities, bot populations, and activity levels.
 
 import random
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List, Tuple
 from uuid import UUID, uuid4
 
@@ -374,7 +376,7 @@ class CommunityOrchestrator:
                 return
 
             # Generate posts for each day
-            now = datetime.utcnow()
+            now = utcnow()
 
             for days_ago in range(days_of_history, 0, -1):
                 day = now - timedelta(days=days_ago)

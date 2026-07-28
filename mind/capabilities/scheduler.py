@@ -16,6 +16,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Callable, Coroutine, Optional
 from uuid import UUID, uuid4
@@ -90,7 +92,7 @@ class ScheduledTask:
 
     def calculate_next_run(self) -> Optional[datetime]:
         """Calculate the next run time."""
-        now = datetime.utcnow()
+        now = utcnow()
 
         if self.cron_expression:
             return self._parse_cron_next(now)
@@ -284,7 +286,7 @@ class TaskScheduler:
         """Main scheduler loop."""
         while self._running:
             try:
-                now = datetime.utcnow()
+                now = utcnow()
 
                 # Find tasks ready to run
                 ready_tasks = [
@@ -317,7 +319,7 @@ class TaskScheduler:
         """Execute a single task."""
         async with self._semaphore:
             task.status = TaskStatus.RUNNING
-            start_time = datetime.utcnow()
+            start_time = utcnow()
 
             try:
                 # Create execution task with timeout
@@ -335,7 +337,7 @@ class TaskScheduler:
                 task.last_result = TaskResult(
                     success=True,
                     data=result,
-                    execution_time_ms=(datetime.utcnow() - start_time).total_seconds() * 1000
+                    execution_time_ms=(utcnow() - start_time).total_seconds() * 1000
                 )
                 task.status = TaskStatus.COMPLETED
                 task.run_count += 1
@@ -363,7 +365,7 @@ class TaskScheduler:
 
                 # Retry logic
                 if task.failure_count < task.max_retries:
-                    task.next_run = datetime.utcnow() + timedelta(
+                    task.next_run = utcnow() + timedelta(
                         seconds=task.retry_delay_seconds * task.failure_count
                     )
                     task.status = TaskStatus.PENDING
@@ -384,7 +386,7 @@ class TaskScheduler:
         if not task:
             return None
 
-        task.next_run = datetime.utcnow()
+        task.next_run = utcnow()
         await self._execute_task(task)
         return task.last_result
 

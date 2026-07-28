@@ -3,6 +3,8 @@ User API routes - User registration and profile management.
 """
 
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -288,7 +290,7 @@ async def update_user(user_id: UUID, display_name: str, current_user: CurrentUse
             raise NotFoundError(resource_type="User", resource_id=str(user_id))
 
         user.display_name = display_name
-        user.last_active = datetime.utcnow()
+        user.last_active = utcnow()
         await session.commit()
 
         return {"status": "updated"}

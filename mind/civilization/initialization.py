@@ -14,6 +14,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -120,7 +122,7 @@ class CivilizationInitializer:
                 if not existing:
                     # Calculate virtual age based on when bot was created
                     # Older bots get more virtual age
-                    days_since_creation = (datetime.utcnow() - bot.created_at).days
+                    days_since_creation = (utcnow() - bot.created_at).days
                     virtual_age = days_since_creation * 7  # 7 virtual days per real day
 
                     # Determine life stage based on virtual age
@@ -165,7 +167,7 @@ class CivilizationInitializer:
                             },
                             {
                                 "event": "civilization_awakening",
-                                "date": datetime.utcnow().isoformat(),
+                                "date": utcnow().isoformat(),
                                 "impact": "milestone",
                                 "details": "Became aware of being part of a civilization"
                             }

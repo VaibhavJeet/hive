@@ -17,6 +17,8 @@ import math
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Any, Set
 from uuid import UUID
@@ -130,7 +132,7 @@ class TypingIndicatorManager:
 
         self._typing_states[bot_id] = TypingState(
             is_typing=True,
-            started_at=datetime.utcnow(),
+            started_at=utcnow(),
             expected_duration_seconds=duration,
             target_chat_id=chat_id
         )
@@ -236,7 +238,7 @@ class ReadReceiptManager:
         receipt = ReadReceipt(
             message_id=message_id,
             reader_id=reader_id,
-            seen_at=datetime.utcnow()
+            seen_at=utcnow()
         )
 
         self._receipts[message_id].append(receipt)
@@ -379,7 +381,7 @@ class EngagementWaveManager:
         if not schedule:
             return 0
 
-        now = datetime.utcnow()
+        now = utcnow()
 
         async with self._lock:
             for item in schedule:
@@ -410,7 +412,7 @@ class EngagementWaveManager:
 
         Returns up to `limit` engagements whose execute_at time has passed.
         """
-        now = datetime.utcnow()
+        now = utcnow()
         due = []
 
         async with self._lock:
@@ -443,7 +445,7 @@ class EngagementWaveManager:
 
         Returns the number of engagements cleaned up.
         """
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = utcnow() - timedelta(hours=max_age_hours)
         removed = 0
 
         async with self._lock:
@@ -465,7 +467,7 @@ class EngagementWaveManager:
 
     def get_stats(self) -> dict:
         """Get statistics about scheduled engagements."""
-        now = datetime.utcnow()
+        now = utcnow()
         total = len(self._scheduled_engagements)
         executed = sum(1 for e in self._scheduled_engagements if e.executed)
         pending = total - executed
@@ -546,7 +548,7 @@ class SocialProofEngine:
         """Record an engagement for social proof calculation."""
         if post_id not in self._engagement_counts:
             self._engagement_counts[post_id] = {"likes": 0, "comments": 0, "shares": 0}
-            self._engagement_timestamps[post_id] = datetime.utcnow()
+            self._engagement_timestamps[post_id] = utcnow()
 
         if engagement_type == "like":
             self._engagement_counts[post_id]["likes"] += 1
@@ -586,7 +588,7 @@ class SocialProofEngine:
 
     def cleanup_old_entries(self, max_age_hours: int = 48):
         """Remove old engagement tracking data."""
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = utcnow() - timedelta(hours=max_age_hours)
 
         to_remove = [
             post_id for post_id, timestamp in self._engagement_timestamps.items()
@@ -660,7 +662,7 @@ class DailyMoodManager:
 
         # Check if mood is from today
         if existing:
-            hours_since = (datetime.utcnow() - existing.set_at).total_seconds() / 3600
+            hours_since = (utcnow() - existing.set_at).total_seconds() / 3600
             if hours_since < 20:  # Mood lasts ~20 hours
                 return existing
 
@@ -755,7 +757,7 @@ class ConversationCallbackManager:
             other_person_id=other_person_id,
             other_person_name=other_person_name,
             topic=topic,
-            timestamp=datetime.utcnow(),
+            timestamp=utcnow(),
             sentiment=sentiment
         )
 
@@ -782,7 +784,7 @@ class ConversationCallbackManager:
         relevant = [
             m for m in memories
             if m.other_person_id == other_person_id
-            and (datetime.utcnow() - m.timestamp).days < 7  # Within a week
+            and (utcnow() - m.timestamp).days < 7  # Within a week
         ]
 
         if not relevant:
@@ -793,7 +795,7 @@ class ConversationCallbackManager:
             return None
 
         memory = random.choice(relevant)
-        days_ago = (datetime.utcnow() - memory.timestamp).days
+        days_ago = (utcnow() - memory.timestamp).days
 
         if days_ago == 0:
             time_ref = "earlier today"

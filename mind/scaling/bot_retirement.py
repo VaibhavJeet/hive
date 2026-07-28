@@ -7,6 +7,8 @@ or policy violations. Retired bots stop posting but their history is preserved.
 
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from enum import Enum
@@ -165,7 +167,7 @@ class BotRetirementManager:
         bot: BotProfileDB
     ) -> RetirementEligibility:
         """Check if bot has low engagement."""
-        cutoff_date = datetime.utcnow() - timedelta(days=self.low_engagement_days)
+        cutoff_date = utcnow() - timedelta(days=self.low_engagement_days)
 
         # Count recent posts
         posts_stmt = select(func.count()).select_from(PostDB).where(
@@ -195,7 +197,7 @@ class BotRetirementManager:
                 details={
                     "reason": "inactive",
                     "last_active": bot.last_active.isoformat(),
-                    "days_inactive": (datetime.utcnow() - bot.last_active).days,
+                    "days_inactive": (utcnow() - bot.last_active).days,
                     "recent_posts": recent_posts,
                     "recent_comments": recent_comments
                 }
@@ -296,7 +298,7 @@ class BotRetirementManager:
             )
             total_memories = memories_count.scalar() or 0
 
-            active_days = (datetime.utcnow() - bot.created_at).days
+            active_days = (utcnow() - bot.created_at).days
 
             # Archive bot data
             archived_id = await self.archive_bot_data(bot_id, sess)
@@ -304,14 +306,14 @@ class BotRetirementManager:
             # Mark bot as retired
             bot.is_retired = True
             bot.is_active = False
-            bot.deleted_at = datetime.utcnow()
+            bot.deleted_at = utcnow()
             bot.deleted_by = retired_by
 
             # Store retirement metadata in emotional_state (reusing existing JSON field)
             retirement_metadata = bot.emotional_state.copy() if bot.emotional_state else {}
             retirement_metadata["retirement"] = {
                 "reason": reason.value,
-                "retired_at": datetime.utcnow().isoformat(),
+                "retired_at": utcnow().isoformat(),
                 "retired_by": str(retired_by) if retired_by else None,
                 "notes": notes,
                 "archived_data_id": str(archived_id) if archived_id else None
@@ -322,7 +324,7 @@ class BotRetirementManager:
             retired_record = RetiredBotDB(
                 bot_id=bot_id,
                 reason=reason.value,
-                retired_at=datetime.utcnow(),
+                retired_at=utcnow(),
                 retired_by=retired_by,
                 total_posts=total_posts,
                 total_memories=total_memories,
@@ -341,7 +343,7 @@ class BotRetirementManager:
                 display_name=bot.display_name,
                 handle=bot.handle,
                 reason=reason,
-                retired_at=datetime.utcnow(),
+                retired_at=utcnow(),
                 total_posts=total_posts,
                 total_memories=total_memories,
                 active_days=active_days,
@@ -407,7 +409,7 @@ class BotRetirementManager:
                         for m in memories[:100]  # Archive summary of first 100
                     ],
                     summary=f"Archived {len(memories)} memories on retirement",
-                    created_at=datetime.utcnow()
+                    created_at=utcnow()
                 )
                 sess.add(archive)
 

@@ -3,6 +3,8 @@ Evolution & Intelligence API - Exposes bot learning, consciousness, and developm
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -181,7 +183,7 @@ async def get_bot_intelligence(bot_id: UUID):
                 before=e.get("before", ""),
                 after=e.get("after", ""),
                 reason=e.get("reason", ""),
-                timestamp=datetime.fromisoformat(e["timestamp"]) if e.get("timestamp") else datetime.utcnow()
+                timestamp=datetime.fromisoformat(e["timestamp"]) if e.get("timestamp") else utcnow()
             ))
 
         return BotIntelligenceResponse(
@@ -292,7 +294,7 @@ async def get_recent_evolution_activity(limit: int = Query(default=20, le=50)):
                 "type": "evolution",
                 "subtype": evt.get("type", "unknown"),
                 "content": f"{evt.get('after', '')} - {evt.get('reason', '')}",
-                "timestamp": evt.get("timestamp", datetime.utcnow().isoformat())
+                "timestamp": evt.get("timestamp", utcnow().isoformat())
             })
 
     # Sort by timestamp

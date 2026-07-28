@@ -5,6 +5,8 @@ Background tasks for analytics aggregation.
 import asyncio
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional
 
 from sqlalchemy import select, func
@@ -84,7 +86,7 @@ class DailyMetricsAggregator:
             date: Date to aggregate (defaults to today)
         """
         if date is None:
-            date = datetime.utcnow().date()
+            date = utcnow().date()
         else:
             date = date.date() if hasattr(date, "date") else date
 
@@ -188,7 +190,7 @@ class DailyMetricsAggregator:
                 metrics.active_bots = active_bots_count
                 metrics.bot_posts = bot_posts_count
                 metrics.bot_comments = bot_comments_count
-                metrics.updated_at = datetime.utcnow()
+                metrics.updated_at = utcnow()
             else:
                 # Create new record
                 metrics = DailyMetricsDB(
@@ -223,7 +225,7 @@ class DailyMetricsAggregator:
         logger.info(f"Backfilling metrics for past {days} days")
 
         for i in range(days):
-            date = datetime.utcnow().date() - timedelta(days=i)
+            date = utcnow().date() - timedelta(days=i)
             await self.aggregate_daily_metrics(datetime.combine(date, datetime.min.time()))
 
         logger.info("Backfill complete")

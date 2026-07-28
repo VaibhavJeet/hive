@@ -9,6 +9,8 @@ Endpoints for viewing and interacting with the civilization system:
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional
 from uuid import UUID
 
@@ -1373,7 +1375,7 @@ async def get_relationship_detail(bot_id_1: UUID, bot_id_2: UUID):
         # Calculate intensity and interaction count
         intensity = 0.5
         interaction_count = 0
-        formed_at = datetime.utcnow().isoformat()
+        formed_at = utcnow().isoformat()
 
         if rel:
             intensity = rel.affinity_score
@@ -1927,7 +1929,7 @@ async def get_social_circles():
                         {"id": from_bot, "name": from_info.get("name", "Unknown"), "handle": from_info.get("handle", "")},
                         {"id": to_bot, "name": to_info.get("name", "Unknown"), "handle": to_info.get("handle", "")}
                     ],
-                    formed_at=rel.get("formed_at") or datetime.utcnow().isoformat(),
+                    formed_at=rel.get("formed_at") or utcnow().isoformat(),
                     activity_level=_calculate_activity_level(rel.get("interactions", [])),
                     recent_interaction=_get_recent_interaction(rel.get("interactions", [])),
                     bond_strength=rel.get("intensity", 0.5)
@@ -1971,7 +1973,7 @@ async def get_social_circles():
                         {"id": interaction.get("to"), "name": to_bot.get("name", "Unknown")}
                     ],
                     description=interaction.get("context", "shared a moment"),
-                    timestamp=interaction.get("date", datetime.utcnow().isoformat()),
+                    timestamp=interaction.get("date", utcnow().isoformat()),
                     type=_infer_activity_type(interaction.get("context", ""))
                 ))
 
@@ -2043,7 +2045,7 @@ def _calculate_activity_level(interactions: list) -> str:
         return "quiet"
 
     # Count recent interactions (last 7 days)
-    recent_cutoff = datetime.utcnow() - timedelta(days=7)
+    recent_cutoff = utcnow() - timedelta(days=7)
     recent_count = 0
 
     for interaction in interactions:

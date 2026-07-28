@@ -19,6 +19,8 @@ Bots evolve:
 import random
 import json
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Tuple, Any
 from uuid import UUID
 from dataclasses import dataclass, field
@@ -161,7 +163,7 @@ class BotLearningEngine:
         emotional_impact = {"positive": 0.5, "negative": -0.3, "neutral": 0.1}.get(outcome, 0)
 
         experience = LearningExperience(
-            id=f"conv_{datetime.utcnow().timestamp()}",
+            id=f"conv_{utcnow().timestamp()}",
             bot_id=self.profile.id,
             learning_type=LearningType.CONVERSATION,
             content=f"Conversation with {other_person}: {outcome}",
@@ -201,7 +203,7 @@ class BotLearningEngine:
         is_successful = engagement > 2 or sentiment > 0.3
 
         experience = LearningExperience(
-            id=f"feedback_{datetime.utcnow().timestamp()}",
+            id=f"feedback_{utcnow().timestamp()}",
             bot_id=self.profile.id,
             learning_type=LearningType.FEEDBACK,
             content=f"Posted content got {likes} likes, {comments} comments",
@@ -230,7 +232,7 @@ class BotLearningEngine:
     ):
         """Learn from watching other bots."""
         experience = LearningExperience(
-            id=f"obs_{datetime.utcnow().timestamp()}",
+            id=f"obs_{utcnow().timestamp()}",
             bot_id=self.profile.id,
             learning_type=LearningType.OBSERVATION,
             content=f"Saw {observed_bot} {observed_action}",
@@ -256,7 +258,7 @@ class BotLearningEngine:
         self.state.learned_preferences[key] = learned_fact
 
         experience = LearningExperience(
-            id=f"person_{datetime.utcnow().timestamp()}",
+            id=f"person_{utcnow().timestamp()}",
             bot_id=self.profile.id,
             learning_type=LearningType.SOCIAL,
             content=f"Learned about {person_name}: {learned_fact}",
@@ -276,11 +278,11 @@ class BotLearningEngine:
         Should be called periodically (e.g., every hour of activity).
         """
         if self.state.last_reflection:
-            time_since = datetime.utcnow() - self.state.last_reflection
+            time_since = utcnow() - self.state.last_reflection
             if time_since < timedelta(minutes=30):
                 return {"reflected": False, "reason": "too soon"}
 
-        self.state.last_reflection = datetime.utcnow()
+        self.state.last_reflection = utcnow()
 
         insights = []
 
@@ -316,7 +318,7 @@ class BotLearningEngine:
         # Create reflection experience
         if insights:
             experience = LearningExperience(
-                id=f"reflect_{datetime.utcnow().timestamp()}",
+                id=f"reflect_{utcnow().timestamp()}",
                 bot_id=self.profile.id,
                 learning_type=LearningType.REFLECTION,
                 content="Self-reflection: " + "; ".join(insights),
@@ -341,7 +343,7 @@ class BotLearningEngine:
         # Evolve after enough experiences
         recent_experiences = [
             e for e in self.state.experiences
-            if e.timestamp > datetime.utcnow() - timedelta(hours=1)
+            if e.timestamp > utcnow() - timedelta(hours=1)
         ]
 
         if len(recent_experiences) >= 5:
@@ -353,11 +355,11 @@ class BotLearningEngine:
         This is where real change happens.
         """
         if self.state.last_evolution:
-            time_since = datetime.utcnow() - self.state.last_evolution
+            time_since = utcnow() - self.state.last_evolution
             if time_since < timedelta(minutes=15):
                 return []  # Don't evolve too frequently
 
-        self.state.last_evolution = datetime.utcnow()
+        self.state.last_evolution = utcnow()
         events = []
 
         # 1. BELIEF EVOLUTION
@@ -588,7 +590,7 @@ class BotLearningEngine:
         # Evolution summary
         recent_evolution = [
             e for e in self.state.evolution_log
-            if datetime.fromisoformat(e["timestamp"]) > datetime.utcnow() - timedelta(hours=2)
+            if datetime.fromisoformat(e["timestamp"]) > utcnow() - timedelta(hours=2)
         ]
         if recent_evolution:
             context_parts.append(f"\n## HOW YOU'RE CHANGING")
@@ -652,14 +654,14 @@ class BotLearningEngine:
         for exp_data in experiences_data:
             try:
                 exp = LearningExperience(
-                    id=exp_data.get("id", f"imported_{datetime.utcnow().timestamp()}"),
+                    id=exp_data.get("id", f"imported_{utcnow().timestamp()}"),
                     bot_id=self.profile.id,
                     learning_type=LearningType(exp_data.get("type", "observation")),
                     content=exp_data.get("content", ""),
                     context=exp_data.get("context", ""),
                     emotional_impact=exp_data.get("emotional_impact", 0),
                     importance=exp_data.get("importance", 0.5),
-                    timestamp=datetime.fromisoformat(exp_data.get("timestamp", datetime.utcnow().isoformat()))
+                    timestamp=datetime.fromisoformat(exp_data.get("timestamp", utcnow().isoformat()))
                 )
                 self.state.experiences.append(exp)
             except (ValueError, KeyError):

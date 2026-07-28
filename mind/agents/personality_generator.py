@@ -6,6 +6,8 @@ Creates unique, diverse, and consistent personality profiles for bots.
 import random
 import hashlib
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any, Tuple
 from uuid import UUID, uuid4
 
@@ -344,7 +346,7 @@ class PersonalityGenerator:
         emotional_state = self._generate_initial_emotional_state(personality_traits)
 
         # Create avatar seed
-        avatar_seed = hashlib.md5(f"{handle}{datetime.utcnow().isoformat()}".encode()).hexdigest()[:12]
+        avatar_seed = hashlib.md5(f"{handle}{utcnow().isoformat()}".encode()).hexdigest()[:12]
 
         return BotProfile(
             id=uuid4(),

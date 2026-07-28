@@ -6,6 +6,8 @@ import os
 import time
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from collections import deque
 
@@ -34,7 +36,7 @@ def add_system_log(level: str, message: str, details: str = "", source: str = "s
     """Add a log entry to the in-memory buffer. Call this from anywhere in the app."""
     _log_buffer.append({
         "id": len(_log_buffer),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
         "level": level,
         "message": message,
         "details": details,
@@ -168,7 +170,7 @@ def _collect_performance_snapshot():
         _last_disk_time = now
 
     _perf_history.append(PerformancePoint(
-        time=datetime.utcnow().strftime("%H:%M:%S"),
+        time=utcnow().strftime("%H:%M:%S"),
         cpu=round(cpu, 1),
         memory=round(mem, 1),
         disk_io_read=round(max(0, read_rate), 2),

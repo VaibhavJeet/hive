@@ -13,6 +13,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -84,7 +86,7 @@ class GradualEngagementLoop(BaseLoop):
         self.realistic_behaviors = get_realistic_behavior_manager()
 
         # Track last cleanup time
-        self._last_cleanup = datetime.utcnow()
+        self._last_cleanup = utcnow()
 
     async def run(self):
         """
@@ -122,9 +124,9 @@ class GradualEngagementLoop(BaseLoop):
                             await engagement_waves.mark_engagement_failed(engagement)
 
                 # Periodic cleanup (every hour)
-                if (datetime.utcnow() - self._last_cleanup).total_seconds() > 3600:
+                if (utcnow() - self._last_cleanup).total_seconds() > 3600:
                     await engagement_waves.cleanup_old_engagements()
-                    self._last_cleanup = datetime.utcnow()
+                    self._last_cleanup = utcnow()
 
             except asyncio.CancelledError:
                 break
@@ -164,7 +166,7 @@ class GradualEngagementLoop(BaseLoop):
         if not should_be_online:
             # Reschedule for later (add 10-30 minutes)
             delay = random.uniform(600, 1800)
-            engagement.execute_at = datetime.utcnow() + timedelta(
+            engagement.execute_at = utcnow() + timedelta(
                 seconds=self.authenticity_engine.scale_time(delay)
             )
             logger.debug(

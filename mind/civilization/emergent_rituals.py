@@ -15,6 +15,8 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any
 from uuid import UUID
 
@@ -115,7 +117,7 @@ class EmergentRitualsSystem:
                 meaning=ritual_concept.get("meaning", ""),
                 feeling=ritual_concept.get("feeling", ""),
                 proposed_by=proposer_id,
-                proposed_at=datetime.utcnow(),
+                proposed_at=utcnow(),
                 occasion=occasion,
                 adoption_rate=adoption_rate,
                 status=status,
@@ -320,7 +322,7 @@ Respond in JSON:
             instance_db = RitualInstanceDB(
                 ritual_id=ritual_db.id,
                 ritual_name=ritual_name,
-                performed_at=datetime.utcnow(),
+                performed_at=utcnow(),
                 participants=[str(p) for p in participants],
                 contributions=contributions,
                 collective_experience=collective,
@@ -443,7 +445,7 @@ This is spontaneous - don't overthink it."""
         instance_db = RitualInstanceDB(
             ritual_id=None,
             ritual_name="impromptu ceremony",
-            performed_at=datetime.utcnow(),
+            performed_at=utcnow(),
             participants=[str(p) for p in participants],
             contributions=[],
             collective_experience=None,
@@ -611,7 +613,7 @@ Respond in JSON:
             ritual_db.meaning = changes.get("evolved_meaning", ritual_db.meaning)
             ritual_db.elements = (ritual_db.elements or []) + changes.get("new_elements", [])
             evolution_entry = {
-                "date": datetime.utcnow().isoformat(),
+                "date": utcnow().isoformat(),
                 "changes": changes
             }
             ritual_db.evolution_history = (ritual_db.evolution_history or []) + [evolution_entry]

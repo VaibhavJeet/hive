@@ -10,6 +10,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Tuple
 from uuid import UUID
 
@@ -104,7 +106,7 @@ class LifecycleManager:
             # Create lifecycle record
             lifecycle = BotLifecycleDB(
                 bot_id=bot_id,
-                birth_date=datetime.utcnow(),
+                birth_date=utcnow(),
                 birth_generation=generation,
                 birth_era=self._current_era,
                 virtual_age_days=0.0,
@@ -112,7 +114,7 @@ class LifecycleManager:
                 vitality=1.0,
                 life_events=[{
                     "event": "born",
-                    "date": datetime.utcnow().isoformat(),
+                    "date": utcnow().isoformat(),
                     "impact": "defining",
                     "details": f"Entered the world in the {self._current_era} era"
                 }],
@@ -127,7 +129,7 @@ class LifecycleManager:
                 parent2_id=parent2_id,
                 origin_type=origin_type,
                 inherited_traits=inherited_traits or {},
-                creation_date=datetime.utcnow()
+                creation_date=utcnow()
             )
             session.add(ancestry)
 
@@ -191,7 +193,7 @@ class LifecycleManager:
                     # Update age
                     old_stage = lifecycle.life_stage
                     lifecycle.virtual_age_days += virtual_days
-                    lifecycle.last_aged = datetime.utcnow()
+                    lifecycle.last_aged = utcnow()
 
                     # Update life stage using config
                     new_stage = config.get_life_stage(lifecycle.virtual_age_days)
@@ -199,7 +201,7 @@ class LifecycleManager:
                         lifecycle.life_stage = new_stage
                         lifecycle.life_events.append({
                             "event": f"entered_{new_stage}_stage",
-                            "date": datetime.utcnow().isoformat(),
+                            "date": utcnow().isoformat(),
                             "impact": "milestone",
                             "details": f"Transitioned to {new_stage} after {lifecycle.virtual_age_days:.1f} days"
                         })
@@ -266,7 +268,7 @@ class LifecycleManager:
         - Update the bot profile
         """
         lifecycle.is_alive = False
-        lifecycle.death_date = datetime.utcnow()
+        lifecycle.death_date = utcnow()
         lifecycle.death_cause = cause
         lifecycle.death_age = lifecycle.virtual_age_days
 
@@ -278,7 +280,7 @@ class LifecycleManager:
 
         lifecycle.life_events.append({
             "event": "death",
-            "date": datetime.utcnow().isoformat(),
+            "date": utcnow().isoformat(),
             "impact": "final",
             "details": f"Passed on after {lifecycle.virtual_age_days:.1f} virtual days. Cause: {cause}"
         })
@@ -307,7 +309,7 @@ class LifecycleManager:
         retired_record = RetiredBotDB(
             bot_id=lifecycle.bot_id,
             reason=cause,
-            retired_at=datetime.utcnow(),
+            retired_at=utcnow(),
             retired_by=None,  # Natural death, not admin action
             total_posts=total_posts,
             total_memories=total_memories,
@@ -393,7 +395,7 @@ class LifecycleManager:
 
                 grieve_lifecycle.life_events.append({
                     "event": "loss",
-                    "date": datetime.utcnow().isoformat(),
+                    "date": utcnow().isoformat(),
                     "impact": event_impact,
                     "details": f"Lost {bot_name}, who passed away after {lifecycle.virtual_age_days:.1f} virtual days."
                 })
@@ -515,7 +517,7 @@ class LifecycleManager:
             if lifecycle and lifecycle.is_alive:
                 event_record = {
                     "event": event,
-                    "date": datetime.utcnow().isoformat(),
+                    "date": utcnow().isoformat(),
                     "impact": impact,
                     "details": details
                 }

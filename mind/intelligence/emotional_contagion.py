@@ -19,6 +19,8 @@ import random
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from uuid import UUID
 
@@ -447,7 +449,7 @@ class EmotionalContagionManager:
             self._bot_emotions[bot_id] = target_state
 
         # Check hourly influence limit
-        now = datetime.utcnow()
+        now = utcnow()
         if bot_id in self._hourly_influence:
             last_hour, cumulative = self._hourly_influence[bot_id]
             if (now - last_hour).total_seconds() < 3600:
@@ -612,7 +614,7 @@ class EmotionalContagionManager:
         # Record contagion event
         if shifts:
             event = ContagionEvent(
-                event_id=f"contagion_{datetime.utcnow().timestamp()}",
+                event_id=f"contagion_{utcnow().timestamp()}",
                 source_bot_id=source_bot.id,
                 target_bot_ids=[s.source_bot_id for s in shifts if s.source_bot_id],
                 emotion=emotion,
@@ -789,7 +791,7 @@ class EmotionalContagionManager:
             dominant_emotions=dominant_emotions,
             emotional_diversity=diversity,
             tension_level=tension,
-            last_calculated=datetime.utcnow()
+            last_calculated=utcnow()
         )
 
         self._community_moods[community_id] = mood
@@ -922,7 +924,7 @@ class EmotionalContagionManager:
 
     def get_contagion_summary(self, hours: int = 24) -> Dict[str, Any]:
         """Get a summary of contagion events in the last N hours."""
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = utcnow() - timedelta(hours=hours)
         recent_events = [e for e in self._contagion_history if e.timestamp > cutoff]
 
         if not recent_events:

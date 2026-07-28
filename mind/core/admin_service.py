@@ -4,6 +4,8 @@ Handles stats aggregation, admin actions, and audit logging.
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
@@ -32,7 +34,7 @@ class AdminService:
     @staticmethod
     async def get_dashboard_stats(session: AsyncSession) -> Dict[str, Any]:
         """Get overall platform statistics for the admin dashboard."""
-        now = datetime.utcnow()
+        now = utcnow()
         last_24h = now - timedelta(hours=24)
 
         # User stats
@@ -323,7 +325,7 @@ class AdminService:
             return False
 
         bot.is_paused = True
-        bot.paused_at = datetime.utcnow()
+        bot.paused_at = utcnow()
         bot.paused_by = admin_id
 
         await AdminService.log_action(
@@ -385,7 +387,7 @@ class AdminService:
 
         bot.is_deleted = True
         bot.is_active = False
-        bot.deleted_at = datetime.utcnow()
+        bot.deleted_at = utcnow()
         bot.deleted_by = admin_id
 
         await AdminService.log_action(
@@ -539,7 +541,7 @@ class AdminService:
 
         user.is_banned = True
         user.ban_reason = reason
-        user.banned_at = datetime.utcnow()
+        user.banned_at = utcnow()
         user.banned_by = admin_id
 
         await AdminService.log_action(

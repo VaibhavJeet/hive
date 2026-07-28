@@ -17,6 +17,8 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
@@ -534,7 +536,7 @@ class PlatformInitializeResponse(BaseModel):
 )
 async def health_check():
     """Basic health check."""
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": utcnow().isoformat()}
 
 
 @app.get(
@@ -552,7 +554,7 @@ async def detailed_health():
 
     return {
         "status": "healthy" if llm_healthy else "degraded",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
         "components": {
             "database": "healthy",  # Would check actual connection
             "llm": "healthy" if llm_healthy else "unavailable",
@@ -845,7 +847,7 @@ async def send_message_to_bot(
 
         # Update bot state in database
         bot_db.emotional_state = new_emotional.model_dump()
-        bot_db.last_active = datetime.utcnow()
+        bot_db.last_active = utcnow()
         await session.commit()
 
         return MessageResponse(
@@ -1110,7 +1112,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                             "avatar_seed": user.avatar_seed if user else str(user_id),
                             "is_bot": False
                         },
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     })
 
             elif msg_type == "subscribe":
@@ -1149,7 +1151,7 @@ async def send_realtime_notification(user_id: UUID, notification_data: Dict[str,
     await manager.send_to_user(str(user_id), {
         "type": "notification",
         "data": notification_data,
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": utcnow().isoformat()
     })
 
 
@@ -1194,7 +1196,7 @@ class AdminConnectionManager:
                 "level": level,
                 "source": source,
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": utcnow().isoformat()
             }
         }
         # Buffer recent logs
@@ -1212,7 +1214,7 @@ class AdminConnectionManager:
                 "bot_id": bot_id,
                 "activity_type": activity_type,
                 "details": details,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": utcnow().isoformat()
             }
         })
 
@@ -1221,7 +1223,7 @@ class AdminConnectionManager:
         await self.broadcast({
             "type": "system_health",
             "data": health_data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
     async def broadcast_engine_stats(self, stats: Dict[str, Any]):
@@ -1229,7 +1231,7 @@ class AdminConnectionManager:
         await self.broadcast({
             "type": "engine_stats",
             "data": stats,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
     def get_recent_logs(self) -> List[Dict[str, Any]]:
@@ -1287,7 +1289,7 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                 "pending_tasks": engine_status.get("pending_activities", 0),
                 "uptime_seconds": engine_status.get("uptime_seconds", 0)
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
     except Exception as exc:
         # Best-effort: a failed status push must not stop the admin socket connecting.
@@ -1308,7 +1310,7 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                 await admin_manager.send_message(admin_id, {
                     "type": "system_health",
                     "data": health,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": utcnow().isoformat()
                 })
 
             elif msg_type == "get_engine_stats":
@@ -1319,7 +1321,7 @@ async def admin_websocket_endpoint(websocket: WebSocket, admin_id: str):
                     await admin_manager.send_message(admin_id, {
                         "type": "engine_stats",
                         "data": status,
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": utcnow().isoformat()
                     })
 
     except WebSocketDisconnect:
@@ -1333,7 +1335,7 @@ async def broadcast_to_admins(event_type: str, data: Dict[str, Any]):
         await admin_manager.broadcast({
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": utcnow().isoformat()
         })
 
 

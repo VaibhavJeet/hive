@@ -6,6 +6,8 @@ Includes auto-flagging for content with multiple reports.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Dict, List, Optional, Any
 from uuid import UUID, uuid4
@@ -218,7 +220,7 @@ class ReportingService:
                 return None
 
             # Update report status
-            now = datetime.utcnow()
+            now = utcnow()
             report_db.status = ReportStatus.RESOLVED.value
             report_db.resolved_at = now
             report_db.resolved_by = reviewer_id
@@ -361,7 +363,7 @@ class ReportingService:
                 return None
 
             report_db.status = ReportStatus.DISMISSED.value
-            report_db.resolved_at = datetime.utcnow()
+            report_db.resolved_at = utcnow()
             report_db.resolved_by = reviewer_id
             report_db.resolution_action = "no_action"
             report_db.resolution_notes = notes

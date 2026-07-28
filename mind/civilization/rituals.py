@@ -15,6 +15,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Any
 from uuid import UUID
 from enum import Enum
@@ -84,7 +86,7 @@ class RitualsSystem:
         if demo_mode:
             interval_hours = interval_hours / 24  # Much faster in demo
 
-        elapsed = (datetime.utcnow() - last_time).total_seconds() / 3600
+        elapsed = (utcnow() - last_time).total_seconds() / 3600
 
         return elapsed >= interval_hours
 
@@ -101,7 +103,7 @@ class RitualsSystem:
         if not participants:
             return {"status": "no_participants"}
 
-        self._last_rituals[RitualType.REMEMBRANCE] = datetime.utcnow()
+        self._last_rituals[RitualType.REMEMBRANCE] = utcnow()
 
         async with async_session_factory() as session:
             # Get recently departed
@@ -191,7 +193,7 @@ Share a brief remembrance (1-2 sentences). Be genuine and respectful.""",
         if not welcomers:
             return {"status": "no_welcomers"}
 
-        self._last_rituals[RitualType.WELCOME] = datetime.utcnow()
+        self._last_rituals[RitualType.WELCOME] = utcnow()
 
         async with async_session_factory() as session:
             # Get newborn info
@@ -288,7 +290,7 @@ Share a brief welcome (1-2 sentences). Be warm and genuine.""",
         if len(elder_ids) < 2:
             return {"status": "not_enough_elders"}
 
-        self._last_rituals[RitualType.ELDER_COUNCIL] = datetime.utcnow()
+        self._last_rituals[RitualType.ELDER_COUNCIL] = utcnow()
 
         async with async_session_factory() as session:
             contributions = []
@@ -404,7 +406,7 @@ Synthesize a brief collective conclusion (1-2 sentences) that captures the wisdo
         if not audience_ids:
             return {"status": "no_audience"}
 
-        self._last_rituals[RitualType.STORYTELLING] = datetime.utcnow()
+        self._last_rituals[RitualType.STORYTELLING] = utcnow()
 
         async with async_session_factory() as session:
             # Get storyteller

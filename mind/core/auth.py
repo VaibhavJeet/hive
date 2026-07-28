@@ -4,6 +4,8 @@ Handles token creation, verification, password hashing, and user authentication.
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional
 from uuid import UUID
 
@@ -71,7 +73,7 @@ def create_access_token(user_id: UUID) -> str:
     Returns:
         Encoded JWT access token
     """
-    now = datetime.utcnow()
+    now = utcnow()
     expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     payload = {
@@ -98,7 +100,7 @@ def create_refresh_token(user_id: UUID) -> str:
     Returns:
         Encoded JWT refresh token
     """
-    now = datetime.utcnow()
+    now = utcnow()
     expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
     payload = {

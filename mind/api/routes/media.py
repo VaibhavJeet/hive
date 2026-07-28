@@ -3,6 +3,8 @@ Media API routes - Upload, retrieve, delete media files.
 """
 
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -88,7 +90,7 @@ MAX_UPLOAD_BYTES_PER_DAY = 500 * 1024 * 1024  # 500 MB
 
 async def _enforce_upload_quota(uploader_id: UUID) -> None:
     """Reject the request if the caller is over their rolling 24-hour quota."""
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = utcnow() - timedelta(hours=24)
 
     async with async_session_factory() as session:
         stmt = select(
@@ -314,7 +316,7 @@ async def delete_media(media_id: UUID, current_user: CurrentUser):
 
         # Soft delete in database
         media.is_deleted = True
-        media.deleted_at = datetime.utcnow()
+        media.deleted_at = utcnow()
 
         # Optionally delete from storage (uncomment for hard delete)
         # storage = get_media_storage()

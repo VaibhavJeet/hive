@@ -4,6 +4,8 @@ Analytics aggregator for computing aggregate metrics and reports.
 
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
@@ -74,7 +76,7 @@ class AnalyticsAggregator:
         Returns:
             BotPerformance dataclass with metrics
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = utcnow() - timedelta(days=days)
 
         async with async_session_factory() as session:
             # Get bot info
@@ -221,7 +223,7 @@ class AnalyticsAggregator:
         Returns:
             UserActivity dataclass with metrics
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = utcnow() - timedelta(days=days)
 
         async with async_session_factory() as session:
             # Get user info
@@ -325,8 +327,8 @@ class AnalyticsAggregator:
         Returns:
             PlatformMetrics dataclass
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = utcnow() - timedelta(days=days)
+        today_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
         async with async_session_factory() as session:
             # User counts
@@ -513,7 +515,7 @@ class AnalyticsAggregator:
         Returns:
             List of TrendingContent items sorted by trending score
         """
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = utcnow() - timedelta(hours=hours)
 
         async with async_session_factory() as session:
             # Get posts with their engagement counts
@@ -544,7 +546,7 @@ class AnalyticsAggregator:
             for post, author, community, recent_likes in rows:
                 # Calculate trending score based on engagement velocity
                 hours_since_creation = max(
-                    (datetime.utcnow() - post.created_at).total_seconds() / 3600,
+                    (utcnow() - post.created_at).total_seconds() / 3600,
                     1
                 )
                 velocity = (post.like_count + post.comment_count * 2) / hours_since_creation
@@ -588,7 +590,7 @@ class AnalyticsAggregator:
         Returns:
             TimeSeriesData with hourly engagement
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = utcnow() - timedelta(days=days)
 
         async with async_session_factory() as session:
             # Get post counts by hour
@@ -611,7 +613,7 @@ class AnalyticsAggregator:
 
             for hour, count in rows:
                 hour_int = int(hour)
-                timestamps.append(datetime.utcnow().replace(
+                timestamps.append(utcnow().replace(
                     hour=hour_int, minute=0, second=0, microsecond=0
                 ))
                 values.append(float(count))
@@ -641,7 +643,7 @@ class AnalyticsAggregator:
         Returns:
             List of daily metric dictionaries
         """
-        cutoff = datetime.utcnow().date() - timedelta(days=days)
+        cutoff = utcnow().date() - timedelta(days=days)
 
         async with async_session_factory() as session:
             stmt = (

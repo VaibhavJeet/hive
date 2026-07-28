@@ -4,6 +4,8 @@ Handles behavior flagging and auto-moderation of bots.
 """
 
 from datetime import datetime
+
+from mind.core.time import utcnow
 from typing import List, Optional, Literal
 from uuid import UUID
 from enum import Enum
@@ -147,7 +149,7 @@ class FlaggingService:
             pending_count = await self._get_pending_flag_count(session, bot_id)
             if pending_count >= self.auto_pause_threshold and not bot.is_paused:
                 bot.is_paused = True
-                bot.paused_at = datetime.utcnow()
+                bot.paused_at = utcnow()
                 # System auto-pause
                 await session.commit()
                 result["auto_paused"] = True
@@ -271,7 +273,7 @@ class FlaggingService:
             flag.status = FlagStatus.RESOLVED.value
             flag.resolution = resolution
             flag.resolved_by = admin_id
-            flag.resolved_at = datetime.utcnow()
+            flag.resolved_at = utcnow()
 
             await session.commit()
 

@@ -14,6 +14,8 @@ import asyncio
 import random
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Optional, Dict, List, Tuple, Any
 from uuid import UUID, uuid4
 
@@ -155,7 +157,7 @@ class ReproductionManager:
                 return False, "Too closely related"
 
             # Check birth rate limits
-            recent = [b for b in self._recent_births if b > datetime.utcnow() - timedelta(days=1)]
+            recent = [b for b in self._recent_births if b > utcnow() - timedelta(days=1)]
             if len(recent) >= config.max_births_per_day:
                 return False, "Population growth limit reached for today"
 
@@ -257,7 +259,7 @@ class ReproductionManager:
             )
 
             # Track birth
-            self._recent_births.append(datetime.utcnow())
+            self._recent_births.append(utcnow())
 
             logger.info(
                 f"[REPRODUCTION] New bot born: {child_identity['name']} "
@@ -354,7 +356,7 @@ class ReproductionManager:
                 f"Created legacy successor: {child_identity['name']}"
             )
 
-            self._recent_births.append(datetime.utcnow())
+            self._recent_births.append(utcnow())
 
             logger.info(
                 f"[REPRODUCTION] Legacy bot created: {child_identity['name']} "
@@ -424,7 +426,7 @@ class ReproductionManager:
                 session=session
             )
 
-            self._recent_births.append(datetime.utcnow())
+            self._recent_births.append(utcnow())
 
             logger.info(
                 f"[REPRODUCTION] Spontaneous emergence: {identity['name']} "

@@ -11,6 +11,8 @@ Provides comprehensive analytics dashboard endpoints including:
 """
 
 from datetime import datetime, timedelta, date
+
+from mind.core.time import utcnow
 from typing import List, Optional, Dict, Any, Literal
 from uuid import UUID
 from enum import Enum
@@ -612,7 +614,7 @@ async def get_platform_metrics(
         total_sessions_today=metrics.total_sessions_today,
         avg_session_duration_minutes=round(metrics.avg_session_duration / 60, 2),
         period_days=days,
-        generated_at=metrics.generated_at or datetime.utcnow()
+        generated_at=metrics.generated_at or utcnow()
     )
 
 
@@ -747,7 +749,7 @@ def parse_date_range(
         except ValueError:
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
     else:
-        end_dt = datetime.utcnow()
+        end_dt = utcnow()
 
     if start_date:
         try:
@@ -1443,7 +1445,7 @@ async def get_realtime_metrics(
     """
     await verify_admin(current_user)
 
-    now = datetime.utcnow()
+    now = utcnow()
     one_hour_ago = now - timedelta(hours=1)
     five_min_ago = now - timedelta(minutes=5)
     fifteen_min_ago = now - timedelta(minutes=15)
@@ -1599,7 +1601,7 @@ async def get_activity_heatmap(
     - peak_hour: Hour with highest overall activity
     - peak_day: Day of week with highest overall activity
     """
-    now = datetime.utcnow()
+    now = utcnow()
     cutoff = now - timedelta(days=days)
 
     # Initialize heatmap grid: heatmap[day_of_week][hour] = count

@@ -13,6 +13,8 @@ Handles:
 import asyncio
 import logging
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from typing import Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -74,7 +76,7 @@ class ResponseLoop(BaseLoop):
 
         # Priority flags
         self.user_interaction_active = False
-        self.last_user_interaction = datetime.utcnow() - timedelta(minutes=5)
+        self.last_user_interaction = utcnow() - timedelta(minutes=5)
 
     async def run(self):
         """Run the response processor loop."""
@@ -122,7 +124,7 @@ class ResponseLoop(BaseLoop):
             "user_id": user_id,
             "content": content,
             "context": context or {},
-            "queued_at": datetime.utcnow()
+            "queued_at": utcnow()
         })
 
     async def _generate_dm_reply(self, task: dict):
@@ -138,7 +140,7 @@ class ResponseLoop(BaseLoop):
 
         # Mark user interaction active - pauses background LLM calls
         self.user_interaction_active = True
-        self.last_user_interaction = datetime.utcnow()
+        self.last_user_interaction = utcnow()
 
         # PRIORITY: Pause all other conscious minds to free LLM resources for this DM
         if self.conscious_mind_manager:

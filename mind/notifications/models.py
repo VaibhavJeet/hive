@@ -4,6 +4,8 @@ Notification data models and enums.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
@@ -84,7 +86,7 @@ class Notification:
             body=data["body"],
             data=data.get("data", {}),
             read=data.get("read", False),
-            created_at=datetime.fromisoformat(data["created_at"]) if isinstance(data.get("created_at"), str) else data.get("created_at", datetime.utcnow()),
+            created_at=datetime.fromisoformat(data["created_at"]) if isinstance(data.get("created_at"), str) else data.get("created_at", utcnow()),
         )
 
 
@@ -120,5 +122,5 @@ class PushSubscription:
             user_id=UUID(data["user_id"]) if isinstance(data["user_id"], str) else data["user_id"],
             endpoint=data["endpoint"],
             keys=data["keys"],
-            created_at=datetime.fromisoformat(data["created_at"]) if isinstance(data.get("created_at"), str) else data.get("created_at", datetime.utcnow()),
+            created_at=datetime.fromisoformat(data["created_at"]) if isinstance(data.get("created_at"), str) else data.get("created_at", utcnow()),
         )

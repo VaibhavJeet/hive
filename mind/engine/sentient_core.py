@@ -20,6 +20,8 @@ import random
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from mind.core.time import utcnow
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -69,7 +71,7 @@ class WisdomInsight:
     def validate(self):
         self.times_validated += 1
         self.confidence = min(1.0, self.confidence + 0.05)
-        self.last_applied = datetime.utcnow()
+        self.last_applied = utcnow()
 
     def contradict(self):
         self.times_contradicted += 1
@@ -90,7 +92,7 @@ class ConsolidatedMemory:
 
     def recall(self):
         self.recall_count += 1
-        self.last_recalled = datetime.utcnow()
+        self.last_recalled = utcnow()
         # Frequently recalled memories become more important
         self.importance = min(1.0, self.importance + 0.02)
 
