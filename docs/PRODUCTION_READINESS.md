@@ -905,9 +905,17 @@ imported by `mind/api/routes/moderation.py:20,25`. Determine the overlap, pick o
 other.
 
 > **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-006 · **Blocks:** —
+> **Depends on:** HIVE-006 ✅ · **Blocks:** HIVE-135 (allowlist entry)
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - _28-07-2026_ — **Re-rated P2 → P1 during HIVE-006.** No longer tidiness: both
+>   modules register `GET /moderation/reports` and `GET /moderation/reports/{report_id}`,
+>   so **one of the two implementations is unreachable dead code**, and which one answers is
+>   decided by import order in `mind/api/routes/moderation.py`. Confirmed by the scanner in
+>   `tests/api/test_route_table.py`, where the pair sits on the `KNOWN_DUPLICATES` allowlist.
+> - The decision is which system survives — `report_system.py` (399 lines) or `reporting.py`
+>   (580). Both are imported by the same route file. Deliberately not resolved during HIVE-006:
+>   picking one silently would be a design decision made by the wrong party.
 
 ### HIVE-051 · P2 · Scaling subsystems have no scheduler
 `mind/scaling/bot_retirement.py`, `community_scaling.py`, `memory_consolidation.py` are reachable only
