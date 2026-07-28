@@ -277,6 +277,20 @@ class Settings(BaseSettings):
     # GITHUB
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # SELF-CODING (bots writing and executing their own code)
+    # -------------------------------------------------------------------------
+
+    SELF_CODING_HTTP_TRIGGER_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Expose POST /evolution/bots/{id}/trigger-self-coding. Caller-supplied text "
+            "is interpolated into the prompt that generates code which is then exec()'d "
+            "in-process, behind a denylist that string concatenation defeats. Keep this "
+            "off until the sandbox is replaced (HIVE-032)."
+        ),
+    )
+
     GITHUB_TOKEN: Optional[str] = Field(
         default=None,
         description="GitHub Personal Access Token for bot development capabilities"

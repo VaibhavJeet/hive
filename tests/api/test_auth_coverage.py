@@ -106,7 +106,7 @@ EXPECTED_OPEN = {
     "system": 3,             # HIVE-015
     "search": 5,             # HIVE-016
     "platform": 7,           # HIVE-015
-    "evolution": 8,          # HIVE-014
+    "evolution": 4,          # bot-intelligence reads (public by design)
     "civilization": 57,      # reads are the observation product; 28 writes closed by HIVE-013
 }
 
