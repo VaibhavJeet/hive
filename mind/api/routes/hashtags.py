@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Depends, APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from mind.api.dependencies import CurrentUser, OptionalUser
@@ -16,6 +16,9 @@ from mind.hashtags.hashtag_service import (
     HashtagPost,
 )
 
+
+from mind.api.dependencies import get_current_user
+from mind.core.auth import AuthenticatedUser
 
 router = APIRouter(prefix="/hashtags", tags=["hashtags"])
 
@@ -221,7 +224,8 @@ async def get_followed_hashtags(current_user: CurrentUser):
 @router.get("/search/query", response_model=List[SearchHashtagResponse])
 async def search_hashtags(
     q: str = Query(..., min_length=1, max_length=50, description="Search query"),
-    limit: int = Query(default=10, le=50)
+    limit: int = Query(default=10, le=50),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     """
     Search for hashtags matching a query.

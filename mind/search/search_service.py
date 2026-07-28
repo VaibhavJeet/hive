@@ -3,6 +3,7 @@ Search service for full-text search across posts, users, and bots.
 Uses PostgreSQL's built-in full-text search capabilities (tsvector, tsquery, ts_rank).
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Any
@@ -116,21 +117,35 @@ class SearchService:
             return self._session
         return async_session_factory()
 
+    #: Everything outside this set is replaced with a space before the string reaches
+    #: `to_tsquery`. Punctuation is not a SQL injection risk — the query is bound as a
+    #: parameter — but it *is* parsed as tsquery grammar: `to_tsquery('foo!:*')` raises
+    #: a syntax error, which surfaced as a 500 on any search containing punctuation
+    #: (HIVE-016). An allowlist is used rather than a denylist of operators, so a
+    #: character nobody thought about cannot reach the parser.
+    _SAFE_QUERY_CHARS = re.compile(r"[^\w\s-]", re.UNICODE)
+
     def _prepare_query(self, query: str) -> str:
         """
-        Prepare search query for PostgreSQL tsquery.
-        Handles special characters and creates proper search terms.
+        Prepare a user search string for PostgreSQL `to_tsquery`.
+
+        Strips tsquery operators, then ANDs the remaining words with a `:*` prefix
+        match so autocomplete behaves. Returns "" when nothing usable is left, which
+        callers treat as an empty result rather than running a match-everything query.
         """
-        # Remove special characters that could break tsquery
-        cleaned = query.strip()
+        cleaned = self._SAFE_QUERY_CHARS.sub(" ", query or "").strip()
         if not cleaned:
             return ""
 
-        # Split into words and join with & for AND search
-        words = cleaned.split()
-        # Add :* suffix for prefix matching (autocomplete-friendly)
-        terms = [f"{word}:*" for word in words if word]
-        return " & ".join(terms)
+        # Cap the term count: each term is another AND clause, and the whole
+        # expression is evaluated per row for as long as search_vector is unpopulated.
+        # Each term must contain a word character: `-` is allowed so hyphenated words
+        # survive, but a term of only hyphens is not a search term.
+        words = [w for w in cleaned.split() if any(c.isalnum() for c in w)][:10]
+        if not words:
+            return ""
+
+        return " & ".join(f"{word}:*" for word in words)
 
     async def search_posts(
         self,
