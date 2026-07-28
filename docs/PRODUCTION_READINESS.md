@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 132 tasks — 26 P0, 46 P1, 50 P2, 10 P3.  ·  **Done:** 5 (HIVE-001, 002, 068, 125, 131)
+**Counts:** 133 tasks — 26 P0, 47 P1, 50 P2, 10 P3.  ·  **Done:** 8 (HIVE-001, 002, 003, 068, 125, 129, 131, 133)
 
 ## How to work this
 
@@ -204,10 +204,78 @@ IDs only where a *target* (not an actor) is meant.
 **AC:** grep for `user_id:` / `moderator_id:` / `author_id:` in route signatures returns only target
 parameters; an integration test proves user A cannot act as user B.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-119 · **Blocks:** HIVE-004, HIVE-005, HIVE-006, HIVE-007, HIVE-008, HIVE-009, HIVE-010, HIVE-011, HIVE-012, HIVE-013, HIVE-014, HIVE-015, HIVE-016, HIVE-017, HIVE-018, HIVE-058, HIVE-068, HIVE-084, HIVE-111
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-119 ⚠️ (started anyway — see below) · **Blocks:** HIVE-004…018, HIVE-058, HIVE-068 ✅, HIVE-084, HIVE-111
+> **Blockers:**
+> - _28-07-2026_ — ⚠️ **Started with HIVE-119 still open, deliberately.** This document's own rule
+>   says record the reason, so: HIVE-119 decides whether the social-platform half is kept or deleted,
+>   which changes *whether these routers exist* but not *what correct looks like*. Leaving a live
+>   impersonation flaw open while waiting on a product decision is the wrong risk trade. If HIVE-119
+>   comes back "delete", this work is discarded, not wasted — deleting a secured endpoint is no harder
+>   than deleting an insecure one. **HIVE-119 is still the single most valuable thing you can answer.**
+> - _28-07-2026_ — **Resolved, escalated to [HIVE-129](#hive-129--p1--pytest-cannot-collect-the-suite-at-all).**
+>   Could not run the AC test at all until the `api` marker was declared. Fixed it here (one line in
+>   `pyproject.toml`) because it blocked verification for the third turn running — **HIVE-129 is now
+>   closed.**
+> **Feedback:**
+> - **Done, AC verified by execution.** 46 api tests pass; full suite **261 passed, 8 pre-existing
+>   failures, no regressions**.
+> - **Scope was 3× the task description.** It cited 5 sites; a systematic AST sweep of every route
+>   signature found **52**, of which **44 were actors** and 10 legitimate targets. Converted all 44
+>   across 9 routers. Endpoints requiring auth went from **~35 to 98 of 252**.
+> - **`is_bot` was worse than the impersonation.** `like_post`, `create_comment`,
+>   `send_community_message`, `send_direct_message`, `create_story`, `mark_story_viewed` and
+>   `upload_media` all took a caller-supplied `is_bot`/`author_is_bot` flag — and the moderation
+>   pipeline was written as `if not is_bot: check_content(...)`. **Any caller could skip content
+>   moderation entirely by passing `is_bot=true`.** All such flags removed; bots write through the
+>   engine, not HTTP.
+> - **Four further defects found while doing this, all fixed here:**
+>   1. **`handle_errors` swallowed `HTTPException` → 500** (`mind/core/decorators.py:65`). It
+>      re-raised `AppError` but not `HTTPException`, so every deliberate 401/403/404 inside a
+>      decorated handler became a 500. It affected 23 handlers across `auth`, `chat`, `feed`, and
+>      `users`, and it defeated the ownership check I had just added. **My own AC test caught it** —
+>      it expected 403 and got 500. Without that test this task would have shipped "secured"
+>      endpoints that returned 500 instead of enforcing anything.
+>   2. **Notification IDOR.** `mark_as_read` / `delete_notification` took only a notification id, so
+>      any user could act on any notification. Both now take `owner_id` and scope the statement.
+>   3. **`PUT /users/{user_id}` let anyone rename any account.** Now ownership-checked.
+>   4. **Route shadowing** — filed as
+>      **[HIVE-133](#hive-133--p1--users-router-shadowed-users-blocked)**, fixed here.
+> - **`verify_user_exists()` and `verify_admin()` deleted from `blocking.py`.** Both took a
+>   caller-supplied id, so they proved only that *some* such user existed — never that the caller was
+>   that user. They read like security and were not; that pattern is worth grepping for elsewhere.
+> - **Two existing tests asserted the vulnerability** — `test_like_post` and `test_create_comment`
+>   passed `user_id` anonymously and accepted a 2xx. Rewritten to expect 401. Worth remembering when
+>   reading any other green test in this repo.
+> - **Note for HIVE-004…016.** Those tasks are now **substantially complete** — blocking, chat,
+>   notifications are at 100% auth coverage; feed, hashtags, media, moderation, stories, users are
+>   partial by design (public reads stay public). What genuinely remains is **civilization (0/85),
+>   settings (0/13), system (0/3), search (0/5), evolution (0/8), platform (0/7)** — re-scope them to
+>   that. Run the coverage snippet in this task's commit message to regenerate the table.
+
+### HIVE-133 · P1 · `users` router shadowed `/users/blocked`
+`GET /users/blocked` (blocking router) was registered **after** `GET /users/{user_id}` (users
+router) in `mind/api/main.py`. FastAPI matches in registration order, so `/users/blocked` hit the
+parameterised route first and failed UUID parsing — the endpoint returned **422 for its entire
+existence** and was unreachable.
+**Fix:** register `blocking_router` before `users_router`, with a comment saying why.
+**AC:** `GET /users/blocked` returns 401 unauthenticated (not 422); authenticated, it returns the
+caller's blocked list.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** — · **Blocks:** HIVE-008
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified** — covered by the parametrised auth test in
+>   `tests/api/test_actor_identity.py`, which is what surfaced it: the endpoint returned 422 where
+>   every sibling returned 401.
+> - **Worth a systematic pass.** This is a whole *class* of bug and nothing in the repo guards
+>   against it: any literal path registered after a same-shape parameterised path is silently dead.
+>   Ordering is currently implicit in `main.py`'s 21 `include_router` calls. Cheap fix — a test that
+>   walks `app.routes` and asserts no literal segment is shadowed by an earlier `{param}` at the same
+>   depth. Recommend adding it with HIVE-064.
+> - Nobody noticed because there is no frontend caller: the queen portal never built (HIVE-131) and
+>   `cell/` does not use this endpoint.
 
 ### HIVE-004 · P0 · Add auth to the `feed` router (7 endpoints)
 `mind/api/routes/feed.py` — 0 auth dependencies. Post creation, likes, comments, deletion all open.
@@ -754,10 +822,17 @@ failure worth investigating on its own.
 **AC:** `pytest tests/` collects without error; the failure count is a deliberate, triaged number
 rather than a collection abort.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
 > **Depends on:** — · **Blocks:** HIVE-056, HIVE-059, HIVE-060, HIVE-064
 > **Blockers:** _none recorded_
 > **Feedback:**
+> - **Done.** One line in `pyproject.toml` declaring the `api` marker. Closed during HIVE-003, which
+>   could not be verified without it. `pytest tests/` now collects cleanly: **261 passed, 8 failed,
+>   6 skipped** — the first complete run of this suite in the repo's history.
+> - The 8 remaining failures are pre-existing and triaged: `test_api_health.py` (5) needs a live
+>   server on `localhost:8000`, `test_civilization_integration.py` (2) needs Postgres,
+>   `test_lifecycle.py::test_legacy_from_children` (1) is a real logic failure — still open, still
+>   worth checking against HIVE-022/HIVE-024 before writing a separate fix.
 > - _28-07-2026_ — Found while verifying HIVE-001. Worked around locally with
 >   `pytest --ignore=tests/api/test_civilization_api.py`; that workaround should be deleted, not
 >   institutionalised.
