@@ -467,45 +467,6 @@ the platform's own auth configuration.
 >   (HIVE-068), and `apiFetch` sends the bearer token — but a signed-in **non-admin** will now
 >   get 403s with no UI affordance explaining why. Worth handling alongside **HIVE-132**.
 
-### HIVE-136 · P1 · The settings API is a write-only facade
-`mind/api/routes/settings.py:100` — `_settings_store` is a **module-level dict**, not storage. Three
-consequences, each independently disqualifying:
-
-1. **It resets to defaults on every restart.** Nothing is persisted.
-2. **Each worker holds its own copy.** With `API_WORKERS=4` (`settings.py:235`), a `PUT` lands on one
-   worker and a later `GET` may read another, so the API returns different values depending on which
-   process answers.
-3. **Nothing reads it.** Verified by grep: no engine, loop, service, or middleware outside
-   `settings.py` consumes `maintenance_mode`, `toxicity_threshold`, `two_factor_enabled`,
-   `profanity_filter`, or any other key. `max_active_bots` *appears* elsewhere but that is
-   `MAX_ACTIVE_BOTS` from the env-var config system — a completely separate mechanism.
-
-So the queen settings page writes to a dict that dies on restart and that no code consults.
-[TODO.md](TODO.md) lists "Make settings page functional" and "Settings functional with backend" as
-complete. **Neither is true.**
-
-**Fix:** decide what settings the platform actually has. Most of these keys duplicate
-`mind/config/settings.py` (env-driven) or `mind/civilization/config.py` (DB-backed, and a working
-model to copy). Then persist to a table, read through a cached accessor, and wire each key to the
-code that should honour it — or delete the keys nothing will ever consume.
-**AC:** a setting changed through the API survives a restart, is visible from every worker, and
-demonstrably changes platform behaviour (one end-to-end test per key that is kept).
-
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-007 ✅ · **Blocks:** HIVE-099
-> **Blockers:** _none recorded_
-> **Feedback:**
-> - _28-07-2026_ — Found while gating the router in HIVE-007. The endpoints are now admin-only, so
->   this is no longer urgent from a security angle — but it is a **documented-complete feature that
->   does nothing**, which is worse than a missing one because nobody re-checks it.
-> - **`mind/civilization/config.py` already solves this problem properly** (DB-backed, cached,
->   consumed by the lifecycle manager). Copy that pattern rather than inventing a third config system
->   — the repo already has two.
-> - **Scope check before building.** Several keys (`jwt_expiry_hours`, `max_login_attempts`,
->   `session_timeout_minutes`) describe behaviour that is not implemented anywhere — there is no
->   lockout mechanism and no 2FA. Persisting a `two_factor_enabled` flag with nothing behind it just
->   moves the facade. **Delete those keys or implement the behaviour; do not persist a lie.**
-
 ### HIVE-008 · P0 · Add auth to the `blocking` router (10 endpoints)
 `mind/api/routes/blocking.py` — 0 auth dependencies. Anyone can create/remove blocks on behalf of
 anyone, which is also a harassment vector.
@@ -1577,6 +1538,45 @@ comprehensive list"*. The moderation *API* is complete; the enforcement behind i
 > **Depends on:** HIVE-006 · **Blocks:** —
 > **Blockers:** _none recorded_
 > **Feedback:** _pending_
+
+### HIVE-136 · P1 · The settings API is a write-only facade
+`mind/api/routes/settings.py:100` — `_settings_store` is a **module-level dict**, not storage. Three
+consequences, each independently disqualifying:
+
+1. **It resets to defaults on every restart.** Nothing is persisted.
+2. **Each worker holds its own copy.** With `API_WORKERS=4` (`settings.py:235`), a `PUT` lands on one
+   worker and a later `GET` may read another, so the API returns different values depending on which
+   process answers.
+3. **Nothing reads it.** Verified by grep: no engine, loop, service, or middleware outside
+   `settings.py` consumes `maintenance_mode`, `toxicity_threshold`, `two_factor_enabled`,
+   `profanity_filter`, or any other key. `max_active_bots` *appears* elsewhere but that is
+   `MAX_ACTIVE_BOTS` from the env-var config system — a completely separate mechanism.
+
+So the queen settings page writes to a dict that dies on restart and that no code consults.
+[TODO.md](TODO.md) lists "Make settings page functional" and "Settings functional with backend" as
+complete. **Neither is true.**
+
+**Fix:** decide what settings the platform actually has. Most of these keys duplicate
+`mind/config/settings.py` (env-driven) or `mind/civilization/config.py` (DB-backed, and a working
+model to copy). Then persist to a table, read through a cached accessor, and wire each key to the
+code that should honour it — or delete the keys nothing will ever consume.
+**AC:** a setting changed through the API survives a restart, is visible from every worker, and
+demonstrably changes platform behaviour (one end-to-end test per key that is kept).
+
+> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
+> **Depends on:** HIVE-007 ✅ · **Blocks:** HIVE-099
+> **Blockers:** _none recorded_
+> **Feedback:**
+> - _28-07-2026_ — Found while gating the router in HIVE-007. The endpoints are now admin-only, so
+>   this is no longer urgent from a security angle — but it is a **documented-complete feature that
+>   does nothing**, which is worse than a missing one because nobody re-checks it.
+> - **`mind/civilization/config.py` already solves this problem properly** (DB-backed, cached,
+>   consumed by the lifecycle manager). Copy that pattern rather than inventing a third config system
+>   — the repo already has two.
+> - **Scope check before building.** Several keys (`jwt_expiry_hours`, `max_login_attempts`,
+>   `session_timeout_minutes`) describe behaviour that is not implemented anywhere — there is no
+>   lockout mechanism and no 2FA. Persisting a `two_factor_enabled` flag with nothing behind it just
+>   moves the facade. **Delete those keys or implement the behaviour; do not persist a lie.**
 
 ### HIVE-134 · P2 · Users can only block bots, not other users
 `mind/blocking/blocking_service.py` exposes `block_bot` and nothing else; `UserBlockDB` is keyed
