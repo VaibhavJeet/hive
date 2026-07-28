@@ -18,7 +18,7 @@ Every task has evidence (file:line), a fix, and acceptance criteria. Priorities:
 | **P2** | Required for operating the thing without pain. |
 | **P3** | Hygiene, docs, and cleanup. |
 
-**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 14 (HIVE-001…008, 068, 125, 129, 131, 133, 135)
+**Counts:** 136 tasks — 26 P0, 49 P1, 51 P2, 10 P3.  ·  **Done:** 15 (HIVE-001…009, 068, 125, 129, 131, 133, 135)
 
 **API auth coverage** (live figure: `pytest tests/api/test_auth_coverage.py -s`) — **93 required · 6 optional · 156 open** of 255 endpoints.
 
@@ -511,10 +511,36 @@ auto-pause a bot on its own.
 `mind/api/routes/notifications.py` — 0 auth dependencies. Notification read/mark/delete for arbitrary
 user IDs; a direct privacy leak.
 
-> **Status:** `Not started` · **Owner:** _unassigned_ · **Started:** _—_ · **Closed:** _—_
-> **Depends on:** HIVE-003, HIVE-119 · **Blocks:** —
+**AC:** every notification endpoint requires auth; a user can only read, mutate, and
+subscribe on their own behalf.
+
+> **Status:** `Done` · **Owner:** Claude · **Started:** 28-07-2026 · **Closed:** 28-07-2026
+> **Depends on:** HIVE-003 ✅, HIVE-119 ⚠️ (still open — see HIVE-003) · **Blocks:** HIVE-077
 > **Blockers:** _none recorded_
-> **Feedback:** _pending_
+> **Feedback:**
+> - **Done, AC verified.** Notifications is **9 required / 1 open**. The one open endpoint is
+>   `GET /notifications/push/config`, which serves the public VAPID key — every client needs it
+>   before it can subscribe, so it is correctly anonymous.
+> - HIVE-003 had already closed the read/mutate IDOR (`mark_as_read` and `delete_notification`
+>   took a bare notification id). The authorization pass found one more.
+> - 🚨 **Push subscription takeover.** `PushService.register_device` looked its row up by
+>   **endpoint alone** and, on a match, reassigned `user_id` to the caller. Submitting another
+>   user's endpoint took over their subscription: **the victim silently stopped receiving push
+>   notifications**, and the attacker's notifications were delivered to the victim's device.
+> - **The interesting part is that the buggy behaviour was deliberate.** Reassigning on match
+>   handles a real case — a shared device where a second person signs in. So the fix is not to
+>   forbid the transfer but to authenticate it: the caller must present the subscription's own
+>   `p256dh`/`auth` keys, which the browser hands only to the origin. An endpoint is an address;
+>   the keys are the credential. Same-user re-registration still refreshes keys, and a genuine
+>   shared-device transfer still works — both asserted, so the fix cannot regress into a block.
+> - **Verified against unpatched code**: 2 of the 5 tests fail when the fix is reverted.
+> - **Note for HIVE-077.** None of this is reachable today — `cell/lib/firebase_options.dart`
+>   is still placeholders and there is no `google-services.json`, so no device can register.
+>   The bug would have shipped the moment push was switched on. Worth re-reading this entry
+>   when doing HIVE-077.
+> - **Residual risk, accepted.** Endpoint-and-keys is the strongest check available server-side;
+>   an attacker who obtains both has the browser's full subscription credential and is
+>   indistinguishable from the device. Mitigation belongs at the transport layer, not here.
 
 ### HIVE-010 · P0 · Add auth to the `stories` router (7 endpoints)
 `mind/api/routes/stories.py` — 0 auth dependencies. Story creation, deletion, and view-tracking open.
