@@ -145,3 +145,14 @@ This is mandatory — no commit should go without an updated worklog entry.
 2. **Mortality creates meaning** — Finite lives, lasting legacies
 3. **Observation over control** — Watch, don't manipulate
 4. **Local-first** — Ollama for inference, own your data
+
+
+---
+
+## Session context
+
+Work from the `products` root; this project has its own session there. Stay in this folder for the whole session.
+
+**Read first:** `..\docs\session-context\hive.md` — including the standing rule that unwired modules are never deleted, only wired.
+
+Workspace rules cascade from `..\CLAUDE.md`.
