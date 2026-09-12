@@ -47,8 +47,8 @@ dependencies:
   image_picker: ^1.1.2
 
   # Firebase for push notifications
-  firebase_core: ^3.8.1
-  firebase_messaging: ^15.2.0
+  firebase_core: ^4.7.0
+  firebase_messaging: ^16.2.0
 
   # Local notifications (for foreground)
   flutter_local_notifications: ^21.0.0
